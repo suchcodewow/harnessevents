@@ -292,12 +292,12 @@ function Get-Prefs($scriptPath) {
     if ($outputLevel -eq 0) {
         $script:choiceColumns = @("Option", "description", "current", "key", "callFunction", "callProperties")
         $script:providerColumns = @("option", "provider", "name", "identifier", "userid", "default")
-        $script:eventList = @("option","Name","ID", "default")
+        $script:eventColumns = @("option","Name","ID", "default")
     }
     else {
         $script:choiceColumns = @("Option", "description", "current")
         $script:providerColumns = @("option", "provider", "name")
-        $script:eventList = @("option","Name")
+        $script:eventColumns = @("option","Name")
     }
     # Load preferences/settings.  Access with $config variable anywhere.  Set-Prefs automatically updates $config variable and saves to file
     # Set with Set-Prefs function
@@ -424,22 +424,47 @@ function Add-Choice() {
 }
 
 # Event Functions
+function New-Event {
+    # Add new event
+    Get-GoogleAccessToken
+    while (-not $nameselected) {
+        $newEvent = read-host -prompt "Name for new event? (upper/lower characters only) <enter> to abort"
+        if (-not($newEvent)) {
+            return
+        }
+        $eventName = $newEvent -replace '\W', ''
+        $newEmail = "event-" + $eventName + "@harnessevents.io"
+        Send-Update -t 0 -c "Generated email: $newEmail from value $newEvent"
+        # Checking if name is in use
+        $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$newEmail'"
+        Send-Update -t 0 -c "Checking group email with uri: $uri"
+        $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+        if (!$response.groups) {
+            # Group doesn't exist
+            New-Group -e $newEmail -n $eventName
+            $addOwner = Add-UserToGroup -u $config.GoogleUser -g $newEmail -o
+            Send-Update -t 1 -c "Added user: $($config.GoogleUser) as owner."
+            $nameselected = $newEmail
+        }
+        else {
+            Send-Update -t 2 -c "Sorry, email already used: $newEmail"
+        }
+    }
+    Get-Events
+}
 function Add-Event {
     param(
-        [string] $e, # event
         [string] $n, # name of item
         [string] $i, # item unique identifier
         [switch] $d # [$true/$false] default option
     )
-    #---Add an option selector to item then add to provider list
     $eventItem = New-Object PSCustomObject -Property @{
         Name    = $n
         ID      = $i
         default = $d
-        option  = $providerLIst.count + 1
+        option  = $eventList.count + 1
     }
     [void]$eventList.add($eventItem)
-    Send-Update -t 0 -c "Added: $n with id: $i"
 }
 function Get-Events {
     # Check token status/refresh
@@ -457,50 +482,44 @@ function Get-Events {
             }
         }
         # Provide option to create a new event
-        Add-Event -n "Create new Event"-i "_create"
+        Add-Event -n "+ Create new event" -i "_create"
+    }
+    $eventDefault = $eventList | Where-Object default -eq $true
+    if ($eventDefault.count -eq 1) {
+        Send-Update -t 0 -c "Setting event with default:  $eventDefault"
+        Set-Event -p $eventDefault
+    }
+    else {
+        Set-Event
     }
 }
 function Set-Event {
+    #Prompt for event option
     param(
         [object] $preset # optional preset to bypass selection
     )
-    $providerSelected = $preset
-    while (-not $providerSelected) {
-        write-output $providerList | sort-object -property Option | format-table $providerColumns | Out-Host
-        $newProvider = read-host -prompt "Which environment to use? <enter> to cancel"
-        if (-not($newProvider)) {
+    $eventSelected = $preset
+    while (-not $eventSelected) {
+        write-output $eventList | sort-object -property Option | format-table $eventColumns | Out-Host
+        $newEvent = read-host -prompt "Select existing or create new event? <enter> to abort"
+        if (-not($newEvent)) {
             return
         }
-        $providerSelected = $providerList | Where-Object { $_.Option -eq $newProvider } | Select-Object -first 1
-        if (-not $providerSelected) {
+        $eventSelected = $eventList | Where-Object { $_.Option -eq $newEvent } | Select-Object -first 1
+        if (-not $eventSelected) {
             write-host -ForegroundColor red "`r`nY U no pick valid option?" 
         }
     }
-    $functionProperties = @{provider = $providerSelected.Provider; id = $providerSelected.identifier.tolower(); userid = $providerSelected.userid.tolower() }
-
+    if ($eventSelected.id -eq "_create") {
+        New-Event
+    }
     # Reset choices
     # Add option to change destination again
-    Add-Choice -k "TARGET" -d "Switch Cloud Provider" -c "$($providerSelected.Provider) $($providerSelected.Name)" -f "Set-Provider" -p $functionProperties
-    # build options for specified provider
-    switch ($providerSelected.Provider) {
-        "Azure" {
-            # Set the Azure subscription
-            Send-Update -t 1 -c "Azure: Set Subscription" -r "az account set --subscription $($providerSelected.identifier)"
-            Set-Prefs -k "provider" -v "azure"
-            Add-AzureSteps 
-        }
-        "AWS" {
-            Send-Update -t 1 -c "AWS: Set region"
-            Set-Prefs -k "provider" -v "aws"
-            Add-AWSSteps 
-        }
-        "GCP" { 
-            # set the GCP Project
-            Send-Update -OutputSuppression -t 1 -c "GCP: Set Project" -r "gcloud config set account '$($providerSelected.identifier)' --no-user-output-enabled"
-            Set-Prefs -k "provider" -v "gcp"
-            Add-GCPSteps 
-        }
-    }
+    Add-Choice -k "EVENT" -d "Switch Event" -c $($config.GoogleEventName) -f "Set-Event" # -p $functionProperties
+    # Cache choice
+    Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+    Set-Prefs -k "GoogleEventId" -v $eventSelected.id
+    # TODO: add a follow-up process
 }
 
 # Google Admin Functions
@@ -508,8 +527,11 @@ function Get-GoogleAccessToken {
     # Check for valid token
     if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
         $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
-        if ($TimeDiff.TotalMinutes -lt 40) {
-            Send-Update -t 1 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+        if ($TimeDiff.TotalMinutes -lt 55) {
+            Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            $script:headers = @{
+                "Authorization" = "Bearer $($config.GoogleAccessToken)"
+            }
             return
         }
         else {
@@ -564,7 +586,11 @@ function Get-GoogleAccessToken {
         Set-Prefs -k "GoogleAccessToken" -v $accessToken
         Set-Prefs -k "GoogleAccessTokenTimestamp" -v $(Get-date)
         Set-Prefs -k "GoogleUser" -v $currentUser
+        $script:headers = @{
+            "Authorization" = "Bearer $($config.GoogleAccessToken)"
+        }
         Send-Update -t 1 -c "Successfully retrieved a new token and timestamp."
+
     }
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
@@ -576,10 +602,6 @@ function New-User {
         [string] $user,
         [string] $group
     )
-    $headers = @{
-        "Authorization" = "Bearer $($config.GoogleAccessToken)"
-        #"ContentType"   = "appplication/json"
-    }
     $body = @{
         "primaryEmail"              = "bill.hope@harnessevents.io"
         # "emails"                    = @(
@@ -601,16 +623,44 @@ function New-User {
     return $response
 }
 function New-Group {
-    $headers = @{
-        "Authorization" = "Bearer $($config.GoogleAccessToken)"
-    }
+    # Create a new group and confirm it is reachable via API before returning
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $email,
+        [Parameter()]
+        [string]
+        $name
+    )
+    if (!$name) { $name = "new-group" }
+    Get-GoogleAccessToken
     $body = @{
-        "email" = "eventmail@harnessevents.io"
-        "name"  = "event"
+        "email" = $email
+        "name"  = $name
     } | ConvertTo-Json
-    $body
     $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
-    return $response
+    Send-Update -t 0 -c "Create new group returned: $response"
+    $success = $false
+    $counter = 0
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$newEmail'"
+    Do {
+        Send-Update -t 1 -c "Waiting for group creation..."
+        $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+        if ($response.groups) {
+            Send-Update -t 1 -c "Group $email created successfully!"
+            $success = $true
+        }
+        else {
+            $counter++
+            if ($counter -gt 10) {
+                Send-Update -t 2 -c "Group creation failed after 10 tries!"
+                exit
+            }
+            Start-sleep -s 2
+        }
+    } until ($success)
+    Get-UserGroups
 }
 function Add-UserToGroup {
     param (
@@ -625,9 +675,6 @@ function Add-UserToGroup {
     # Build api call for group
     $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
     Send-Update -t 1 -c "Group URI: $uri"
-    $headers = @{
-        "Authorization" = "Bearer $($config.GoogleAccessToken)"
-    }
     if ($owner) { $role = "OWNER" } else { $role = "MEMBER" }
     $body = @{
         "email" = $user
@@ -638,12 +685,10 @@ function Add-UserToGroup {
 }
 function Get-GroupKey {
     param (
-        [string] $GroupName
+        [string] $GroupEmail
     )
-    $headers = @{
-        "Authorization" = "Bearer $($config.GoogleAccessToken)"
-    }
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=name='$GroupName'"
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$GroupEmail'"
+    Send-Update -t 0 -c "Looking up key with uri: $uri"
     $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
     if ($response.groups.id) {
         return $response.groups.id
@@ -681,9 +726,6 @@ function Get-UserGroups {
         [string]
         $UserEmail
     )
-    $headers = @{
-        "Authorization" = "Bearer $($config.GoogleAccessToken)"
-    }
     $uri = "https://admin.googleapis.com/admin/directory/v1/groups?userKey=$UserEmail&maxResults=50"
     Send-Update -t 0 -c "Getting Usergroups for uri: $uri"
     $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
@@ -693,18 +735,6 @@ function Get-UserGroups {
 # Gameplay Loop
 # function Get-Event {
 #     while (-not $eventSelected) {
-
-#         write-output $eventList | sort-object -property Option | format-table $providerColumns | Out-Host
-#         $newProvider = read-host -prompt "Which event to use? to cancel"
-#         if (-not($newProvider)) {
-#             return
-#         }
-#         $eventSelected = $eventList | Where-Object { $_.Option -eq $newProvider } | Select-Object -first 1
-#         if (-not $providerSelected) {
-#             write-host -ForegroundColor red "`r`nY U no pick valid option?" 
-#         }
-#     }
-# }
 
 #Main
 Get-Prefs($Myinvocation.MyCommand.Source)
