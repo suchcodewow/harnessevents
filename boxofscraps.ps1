@@ -591,6 +591,29 @@ function Remove-Event {
         return
     }
     Send-Update -t 1 -c "Deleting Users"
+    $members = Get-GroupMembers -membersOnly
+    foreach ($member in $members) {
+        Remove-User -u $member.email
+        Send-Update -t 1 -c "Deleted user: $($member.email)"
+    }
+    While ($memberCount -gt 0) {
+        $memberCount = (Get-GroupMembers -m).count
+        Send-Update -t 1 -c "$memberCount remaining"
+        Start-Sleep -s 4
+        $memberCounter++
+        if ($memberCounter -gt 20) {
+            Send-Update -t 2 -c "Something went wrong- users didn't delete."
+            exit
+        }
+    }
+    Send-Update -t 1 -c "Successfully deleted users"
+    $groupUri = "https://admin.googleapis.com/admin/directory/v1/groups/$($config.GoogleEventId)"
+    Invoke-RestMethod -Method 'Delete' -Uri $groupUri -Headers $headers
+    Send-Update -t 1 -c "Deleted event: $($config.GoogleEventName)"
+    Set-Prefs -k "GoogleEventEmail"
+    Set-Prefs -k "GoogleEventId"
+    Set-Prefs -k "GoogleEventName"
+    Get-Events
 }
 
 # Google Admin Functions
@@ -672,6 +695,7 @@ function New-User {
     param (
         [string] $userEmail
     )
+    $uri = 'https://admin.googleapis.com/admin/directory/v1/users'
     $body = @{
         "primaryEmail"              = $userEmail
         "name"                      = @{
@@ -682,8 +706,20 @@ function New-User {
         "password"                  = "Harness!"
         "changePasswordAtNextLogin" = false
     } | ConvertTo-Json
-    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri 'https://admin.googleapis.com/admin/directory/v1/users' -Body $body -Headers $headers
+    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
+}
+function Remove-User {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $userEmail
+    )
+    $uri = "https://admin.googleapis.com/admin/directory/v1/users/$userEmail"
+    $response = Invoke-RestMethod -Method 'Delete' -Uri $uri -Headers $headers
+    return $response
+
 }
 function Get-User {
     [CmdletBinding()]
