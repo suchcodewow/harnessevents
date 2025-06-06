@@ -446,7 +446,19 @@ function New-Event {
             # Group doesn't exist
             New-Group -e $newEmail -n $eventName
             Add-UserToGroup -u $config.GoogleUser -o | out-null
-            Send-Update -t 1 -c "Added user: $($config.GoogleUser) as owner."
+            Send-Update -t 1 -c "Waiting for $($config.GoogleUser) to be registered as group owner"
+            while (-not $groupReady) {
+                # Wait until slow ass google registers the new group owner. zzzz.....
+                $membershipCheck = (Get-UserGroups -u $config.GoogleUser | Where-Object { $_.email -eq $newEmail }).count
+                if ($membershipCheck -eq 1) {
+                    $groupReady = $true
+                }
+                else {
+                    Send-Update -t 1 -c "User not yet registered..."
+                    Start-Sleep -s 3
+                }
+            }
+            Send-Update -t 1 -c "Successfully added user: $($config.GoogleUser) as owner."
             $nameselected = $newEmail
         }
         else {
@@ -585,7 +597,8 @@ function Set-Event {
         Add-Choice -k "EVENT" -d "Create/Switch Event" -c $($config.GoogleEventName) -f "Set-Event"
         Add-Choice -k "ADDUSERS" -d "Add users to event" -c "current: $memberCount" -f "Add-EventUsers"
         Add-Choice -k "DELEVENT" -d "Delete event and users" -f "Remove-Event"
-        # TODO: add a follow-up process
+        # Google setup done, connect Harness next
+        Get-HarnessConfiguration
     }
 }
 function Remove-Event {
@@ -894,24 +907,77 @@ function Get-GroupMembers {
 
 # Harness Functions
 function Get-HarnessConfiguration {
-    if ($config.HarnessPAT -and $config.HarnessAccountId) {
-        $response = Test-Connectivity
-        if ($response) {
-            Set-Prefs -k "HarnessAccount" -v $response.data.companyName
-            Send-Update -t 1 -c "Token for $($config.HarnessAccount) is good!"
-            return
-        }
+    if ($config.HarnessPAT -and $config.HarnessAccountId -and $config.HarnessAccount) {
+        Set-HarnessConfiguration -p $config.HarnessPAT
     }
-    Send-Update -t 1 -c "Need Harness PAT"
-    Set-HarnessConfiguration
+    else { Set-HarnessConfiguration }
+    # Provide options based on connectivity
+    if ($config.HarnessPAT) {
+        Add-Choice -k "HARNESSCFG" -d "Switch Harness Account" -c "currently: $($config.HarnessAccount)" -f "Set-HarnessConfiguration"
+    }
+    else {
+        Add-Choice -k "HARNESSCFG" -d "Connect to Harness" -f "Set-HarnessConfiguration"
+    }
 }
 function Set-HarnessConfiguration {
-    #Set-Prefs -k "HarnessAccount"
-    #Set-Prefs -k "HarnessPAT"
-
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $presetToken
+    )
+    # Clear existing token data
+    Set-Prefs -k "HarnessAccount"
+    Set-Prefs -k "HarnessAccountId"
+    Set-Prefs -k "HarnessPAT"
+    while (-not $goodToken) {
+        # If there is a cached token, check if it is valid
+        if ($presetToken) {
+            Send-Update -t 1 -c "Trying cached token..."
+            $newToken = $presetToken
+            remove-variable presetToken
+        }
+        else {
+            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token <enter to abort>"
+            if (!$newToken) {
+                return
+            }
+        }
+        $checkToken = $newToken.split(".")
+        if ($checkToken[0] -eq "pat" -and $checkToken.length -eq 4) {
+            Send-Update -t 1 -c "Valid token format. Checking connectivity"
+            $response = Test-Connectivity -harnessToken $newToken
+            if ($response) {
+                Send-Update -t 1 -c "Token validation successful!"
+                Set-Prefs -k "HarnessAccount" -v $response.data.companyName
+                Set-Prefs -k "HarnessAccountId" -v $checkToken[1]
+                Set-Prefs -k "HarnessPAT" -v $newToken
+                $script:HarnessHeaders = @{
+                    "x-api-key" = $newToken
+                } 
+                $goodToken = $newToken
+            }
+            else {
+                Send-Update -t 2 -c "That token looked valid, but was rejected by the API. Please retry."
+            }
+        }
+        else {
+            Send-Update -t 2 -c "Bruh, token should start with 'pat' and have 4 sections separated by periods.  Please retry."
+        }
+    }
 }
 function Test-Connectivity {
-    $uri = "https://app.harness.io/ng/api/accounts/$($config.HarnessAccountId)"
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $harnessToken
+    )
+    $harnessAccount = $harnessToken.split(".")[1]
+    $HarnessHeaders = @{
+        "x-api-key" = $harnessToken
+    } 
+    $uri = "https://app.harness.io/ng/api/accounts/$harnessAccount"
     try {
         $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders
     }
@@ -920,25 +986,73 @@ function Test-Connectivity {
         return $false
     }
     return $response
-
 }
 function Add-Project {
-
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $projectName
+    )
     $body = @{
         "project" = @{
-            "orgIdentifier" = "default"
-            "identifier"    = "apisample"
-            "name"          = "APIsample"
+            "orgIdentifier" = $config.harnessOrgId
+            "identifier"    = $projectName.toLower()
+            "name"          = $projectName
         }
     } | Convertto-Json
-    $uri = "https://app.harness.io/ng/api/projects?accountIdentifier=$($config.HarnessAccount)&orgIdentifier=default"
+    $uri = "https://app.harness.io/ng/api/projects?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.harnessOrgId)"
     $HarnessHeaders
     Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
 }
-
+function Add-Organization {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $orgName
+    )
+    $body = @{
+        "organization" = @{
+            "identifier" = $orgName.tolower()
+            "name"       = $orgName
+        }
+    } | Convertto-Json
+    $uri = "https://app.harness.io/ng/api/organizations?accountIdentifier=$($config.HarnessAccountId)"
+    try {
+        $response = Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
+    }
+    catch {
+        $errorResponse = $_ | Convertfrom-Json
+        if ($errorResponse.code -eq "DUPLICATE_FIELD") {
+            Send-Update -t 2 -c "Just FYI: $orgName already exists in this account"
+        }
+        else {
+            Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
+        }
+        exit
+    }
+    return $response
+}
+function Get-Organizations {
+    # if successful, returns org detail: identifier, name, description, tags
+    # if failure, returns $false
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $orgName
+    )
+    $uri = "https://app.harness.io/ng/api/organizations?accountIdentifier=$($config.HarnessAccountId)&searchTerm=$orgName"
+    $response = Invoke-RestMethod -Method 'GET' -uri $uri -Headers $HarnessHeaders
+    if ($response.data.content.organization) {
+        return $response.data.content.organization
+    }
+    return $false
+}
 #Main
 Get-Prefs($Myinvocation.MyCommand.Source)
-#Get-Events
+Get-Events
 while ($choices.count -gt 0) {
     $cmd = Get-Choice($choices)
     if ($cmd) {
@@ -946,8 +1060,3 @@ while ($choices.count -gt 0) {
     }
     else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
 }
-
-$script:HarnessHeaders = @{
-    "x-api-key" = "$($config.HarnessPAT)"
-} 
-Get-HarnessConfiguration
