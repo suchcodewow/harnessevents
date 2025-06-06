@@ -14,6 +14,7 @@ param (
 
 # Core Functions
 function Get-UserName {
+    # Generate a new username
     $Prefix = @(
         "abundant",
         "delightful",
@@ -319,6 +320,8 @@ function Get-Prefs($scriptPath) {
     Set-Prefs -k userCount -v $users
 }
 function Set-Prefs {
+    # Set a new keypair value. retrieve with $config.<yourkey>
+    # Values are stored in <script>.conf
     param(
         $u, # Add this value to a user's settings (mostly for mult-user setup sweetness)
         $k, # key
@@ -395,7 +398,7 @@ function Get-Choice() {
     return $choices | Where-Object { $_.Option -eq $cmd_selected } | Select-Object -first 1 
 }
 function Add-Choice() {
-    #example: Add-Choice -k 'key' -d 'description' -c 'current' -f 'function' -p 'parameters'
+    #Add a choice to main menu for user selection
     param(
         [string] $key, # key identifying this choice, unique only
         [string] $description, # description of item
@@ -425,7 +428,7 @@ function Add-Choice() {
 
 # Event Functions
 function New-Event {
-    # Add new event
+    # Add new event (essentially a google group with attached email)
     Get-GoogleAccessToken
     while (-not $nameselected) {
         $newEvent = read-host -prompt "Name for new event? (upper/lower characters only) <enter> to abort"
@@ -435,7 +438,7 @@ function New-Event {
         $eventName = $newEvent -replace '\W', ''
         $newEmail = "event-" + $eventName + "@harnessevents.io"
         Send-Update -t 0 -c "Generated email: $newEmail from value $newEvent"
-        # Checking if name is in use
+        # Check if name is in use
         $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$newEmail'"
         Send-Update -t 0 -c "Checking group email with uri: $uri"
         $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
@@ -621,7 +624,7 @@ function Get-GoogleAccessToken {
     # Check for valid token
     if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
         $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
-        if ($TimeDiff.TotalMinutes -lt 55) {
+        if ($TimeDiff.TotalMinutes -lt 50) {
             Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
             $script:headers = @{
                 "Authorization" = "Bearer $($config.GoogleAccessToken)"
@@ -689,6 +692,88 @@ function Get-GoogleAccessToken {
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
+}
+function Get-GroupKey {
+    # Google requires GroupKey for API calls- retrieve the key from the group name
+    param (
+        [string] $GroupEmail
+    )
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$GroupEmail'"
+    Send-Update -t 0 -c "Looking up key with uri: $uri"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    if ($response.groups.id) {
+        return $response.groups.id
+    }
+    else {
+        Send-Update -t 2 -c "NO ID found for URI: $uri"
+    }
+}
+function Get-AccessKeys {
+    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+    if ($project.count -ne 1) {
+        Send-Update -t 2 -c "Failed to find admin project. Might need to login (gcloud auth login)"
+        exit
+    }
+    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
+    gcloud config set project $($config.AdminProjectId)
+    $tom1 = gcloud secrets versions access latest --secret="tom1" --project=$($config.AdminProjectId)
+    if (!$tom1) {
+        Send-Update -t 2 -c "tom1 not found."
+        exit
+    }
+    Set-Prefs -k "tom1" -v $tom1
+    $jerry1 = gcloud secrets versions access latest --secret="jerry1" --project=$($config.AdminProjectId)
+    if (!$jerry1) {
+        Send-Update -t 2 -c "jerry1 not found."
+        exit
+    }
+    Set-Prefs -k "jerry1" -v $jerry1
+    Send-Update -t 1 -c "Projects and administration access loaded successfully"
+}
+
+# Google Workspace Functions
+function Add-UserToGroup {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string] $userEmail,
+        [Parameter()]
+        [string] $groupEmail,
+        [switch] $owner
+    )
+    # Retrieve group key
+    if ($groupEmail) {
+        $groupKey = Get-GroupKey -g $groupEmail
+    }
+    else {
+        $groupKey = $config.GoogleEventId
+    }
+    if (!$groupKey) {
+        Send-Update -t 2 -c "Group Key is missing!  Cannot proceed"
+        exit
+    }
+    # Build api call for group
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
+    Send-Update -t 0 -c "Group URI: $uri"
+    if ($owner) { $role = "OWNER" } else { $role = "MEMBER" }
+    $body = @{
+        "email" = $userEmail
+        "role"  = $role
+    } | ConvertTo-Json
+    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
+    return $response
+}
+function Get-UserGroups {
+    # Get all groups that a user belongs to
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $UserEmail
+    )
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?userKey=$UserEmail&maxResults=50"
+    Send-Update -t 0 -c "Getting Usergroups for uri: $uri"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    return $response.groups
 }
 function New-User {
     [CmdletBinding()]
@@ -806,89 +891,54 @@ function Get-GroupMembers {
     }
     return $false
 }
-function Add-UserToGroup {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string] $userEmail,
-        [Parameter()]
-        [string] $groupEmail,
-        [switch] $owner
-    )
-    # Retrieve group key
-    if ($groupEmail) {
-        $groupKey = Get-GroupKey -g $groupEmail
+
+# Harness Functions
+function Get-HarnessConfiguration {
+    if ($config.HarnessPAT -and $config.HarnessAccountId) {
+        $response = Test-Connectivity
+        if ($response) {
+            Set-Prefs -k "HarnessAccount" -v $response.data.companyName
+            Send-Update -t 1 -c "Token for $($config.HarnessAccount) is good!"
+            return
+        }
     }
-    else {
-        $groupKey = $config.GoogleEventId
+    Send-Update -t 1 -c "Need Harness PAT"
+    Set-HarnessConfiguration
+}
+function Set-HarnessConfiguration {
+    #Set-Prefs -k "HarnessAccount"
+    #Set-Prefs -k "HarnessPAT"
+
+}
+function Test-Connectivity {
+    $uri = "https://app.harness.io/ng/api/accounts/$($config.HarnessAccountId)"
+    try {
+        $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders
     }
-    if (!$groupKey) {
-        Send-Update -t 2 -c "Group Key is missing!  Cannot proceed"
-        exit
+    catch {
+        Send-Update -t 2 -c "Failed to connect to Harness API: $($_.Exception.Message)"
+        return $false
     }
-    # Build api call for group
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
-    Send-Update -t 0 -c "Group URI: $uri"
-    if ($owner) { $role = "OWNER" } else { $role = "MEMBER" }
-    $body = @{
-        "email" = $userEmail
-        "role"  = $role
-    } | ConvertTo-Json
-    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
+
 }
-function Get-GroupKey {
-    param (
-        [string] $GroupEmail
-    )
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$GroupEmail'"
-    Send-Update -t 0 -c "Looking up key with uri: $uri"
-    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
-    if ($response.groups.id) {
-        return $response.groups.id
-    }
-    else {
-        Send-Update -t 2 -c "NO ID found for URI: $uri"
-    }
-}
-function Get-AccessKeys {
-    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
-    if ($project.count -ne 1) {
-        Send-Update -t 2 -c "Failed to find admin project. Might need to login (gcloud auth login)"
-        exit
-    }
-    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
-    gcloud config set project $($config.AdminProjectId)
-    $tom1 = gcloud secrets versions access latest --secret="tom1" --project=$($config.AdminProjectId)
-    if (!$tom1) {
-        Send-Update -t 2 -c "tom1 not found."
-        exit
-    }
-    Set-Prefs -k "tom1" -v $tom1
-    $jerry1 = gcloud secrets versions access latest --secret="jerry1" --project=$($config.AdminProjectId)
-    if (!$jerry1) {
-        Send-Update -t 2 -c "jerry1 not found."
-        exit
-    }
-    Set-Prefs -k "jerry1" -v $jerry1
-    Send-Update -t 1 -c "Projects and administration access loaded successfully"
-}
-function Get-UserGroups {
-    # Get all groups that a user belongs to
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]
-        $UserEmail
-    )
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?userKey=$UserEmail&maxResults=50"
-    Send-Update -t 0 -c "Getting Usergroups for uri: $uri"
-    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
-    return $response.groups
+function Add-Project {
+
+    $body = @{
+        "project" = @{
+            "orgIdentifier" = "default"
+            "identifier"    = "apisample"
+            "name"          = "APIsample"
+        }
+    } | Convertto-Json
+    $uri = "https://app.harness.io/ng/api/projects?accountIdentifier=$($config.HarnessAccount)&orgIdentifier=default"
+    $HarnessHeaders
+    Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
 }
 
 #Main
 Get-Prefs($Myinvocation.MyCommand.Source)
-Get-Events
+#Get-Events
 while ($choices.count -gt 0) {
     $cmd = Get-Choice($choices)
     if ($cmd) {
@@ -896,3 +946,8 @@ while ($choices.count -gt 0) {
     }
     else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
 }
+
+$script:HarnessHeaders = @{
+    "x-api-key" = "$($config.HarnessPAT)"
+} 
+Get-HarnessConfiguration
