@@ -595,8 +595,8 @@ function Set-Event {
         $memberCount = (Get-GroupMembers -m).count
         # Add option to change event later
         Add-Choice -k "EVENT" -d "Create/Switch Event" -c $($config.GoogleEventName) -f "Set-Event"
-        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c "current: $memberCount" -f "Add-EventUsers"
-        Add-Choice -k "DELEVENT" -d "Delete event, users & Harness secrets" -f "Remove-Event"
+        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $memberCount -f "Add-EventUsers"
+        Add-Choice -k "DELEVENT" -d "Delete event" -f "Remove-Event"
         # Google setup done, connect Harness next
         Get-HarnessConfiguration
     }
@@ -913,8 +913,9 @@ function Get-HarnessConfiguration {
     else { Set-HarnessConfiguration }
     # Provide options based on connectivity
     if ($config.HarnessPAT) {
-        Add-Choice -k "HARNESSCFG" -d "Switch Harness Account" -c "currently: $($config.HarnessAccount)" -f "Set-HarnessConfiguration"
-        Add-Choice -k "HARNESSSETUP" -d "Create Harness projects" -c "currently: 0" -f "Initialize-HarnessProjects"
+        Add-Choice -k "HARNESSCFG" -d "Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration"
+        $harnessProjectCount = $(Get-Projects).count
+        Add-Choice -k "HARNESSSETUP" -d "Create Harness projects" -c $harnessProjectCount -f "Initialize-HarnessProjects"
     }
     else {
         Add-Choice -k "HARNESSCFG" -d "Connect to Harness" -f "Set-HarnessConfiguration"
@@ -927,12 +928,19 @@ function Initialize-HarnessProjects {
     }
     Set-Prefs -k "HarnessOrg" -v "event_$($config.GoogleEventName.tolower())"
     Add-Organization
-    $attendees = Get-GroupMembers -m
+    $attendees = Get-GroupMembers
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
-        $cleanProject = ($attendee.email.split("@")[0] -replace '\W', '').tolower()
-        Add-Project -projectName $cleanProject
-        Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
+        if ($attendee.role -eq "OWNER") {
+            # if user is an owner, they are a Harness SE- so grant account admin
+            Add-HarnessAdmin -userEmail $attendee.email
+        }
+        else {
+            # If user is not an owner, then it is an attendee email- give them a project and attendee permissions
+            $cleanProject = ($attendee.email.split("@")[0] -replace '\W', '').tolower()
+            Add-Project -projectName $cleanProject
+            Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
+        }
     }
 }
 function Set-HarnessConfiguration {
@@ -981,6 +989,7 @@ function Set-HarnessConfiguration {
             Send-Update -t 2 -c "Bruh, token should start with 'pat' and have 4 sections separated by periods.  Please retry."
         }
     }
+    
 }
 function Test-Connectivity {
     [CmdletBinding()]
@@ -1036,6 +1045,11 @@ function Add-Project {
         }   
     }
 }
+function Get-Projects {
+    $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/projects&limit=50&sort=name&order=ASC"
+    $response = Invoke-RestMethod -method 'GET' -uri $uri -headers $HarnessHeaders
+    return $response
+}
 function Get-Roleassignments {
     $uri = "https://app.harness.io/authz/api/roleassignments?pageIndex=0&pageSize=50&sortOrders=fieldName%3Dstring%26orderType%3DASC&pageToken=string&accountIdentifier=$($config.HarnessAccountId)&orgidentifer=$($config.HarnessOrg)&projectidentifier=skinnyvegetable"
     Invoke-RestMethod -Method 'GET' -uri $uri -headers $HarnessHeaders
@@ -1083,6 +1097,32 @@ function Add-HarnessUser {
         )
     } | Convertto-Json
     Invoke-RestMethod -Method 'POST' -uri $uri1 -body $body1 -headers $HarnessHeaders -ContentType "application/json" | out-null
+    Send-Update -t 1 -c "Added $userEmail to $projectName project admin and $($config.HarnessOrg) attendeeRole."
+}
+function Add-HarnessAdmin {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $userEmail
+    )
+    $uri = "https://app.harness.io/ng/api/user/users?accountIdentifier=$($config.HarnessAccountId)"
+    $body = @{
+        "emails"       = @(
+            $userEmail
+        )
+        "roleBindings" = @(
+            @{
+                "roleIdentifier"          = "_account_admin"
+                "roleName"                = "Account Admin"
+                "roleScopeLevel"          = "account"
+                "resourceGroupIdentifier" = "_all_resources_including_child_scopes"
+                "managedRole"             = $false
+            }
+        )
+    } | Convertto-Json
+    Invoke-RestMethod -Method 'POST' -uri $uri -body $body -headers $HarnessHeaders -ContentType "application/json" | out-null
+    Send-Update -t 1 -c "Added $userEmail to account admin role."
 }
 function Add-AttendeeRole {
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/roles"
