@@ -595,8 +595,8 @@ function Set-Event {
         $memberCount = (Get-GroupMembers -m).count
         # Add option to change event later
         Add-Choice -k "EVENT" -d "Create/Switch Event" -c $($config.GoogleEventName) -f "Set-Event"
-        Add-Choice -k "ADDUSERS" -d "Add users to event" -c "current: $memberCount" -f "Add-EventUsers"
-        Add-Choice -k "DELEVENT" -d "Delete event and users" -f "Remove-Event"
+        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c "current: $memberCount" -f "Add-EventUsers"
+        Add-Choice -k "DELEVENT" -d "Delete event, users & Harness secrets" -f "Remove-Event"
         # Google setup done, connect Harness next
         Get-HarnessConfiguration
     }
@@ -678,7 +678,7 @@ function Get-GoogleAccessToken {
     $authorizationCode = $context.Request.QueryString["code"]
 
     #Write out response to user
-    $webPageResponse = "<html><head><script>window.close();</script></head><body><div>Safe to close window </div></body></html>"
+    $webPageResponse = "<html><body><div>Safe to close window </div></body></html>"
     $webPageResponseEncoded = [System.Text.Encoding]::UTF8.GetBytes($webPageResponse)
     $webPageResponseLength = $webPageResponseEncoded.Length
     $response = $context.response
@@ -914,9 +914,25 @@ function Get-HarnessConfiguration {
     # Provide options based on connectivity
     if ($config.HarnessPAT) {
         Add-Choice -k "HARNESSCFG" -d "Switch Harness Account" -c "currently: $($config.HarnessAccount)" -f "Set-HarnessConfiguration"
+        Add-Choice -k "HARNESSSETUP" -d "Create Harness projects" -c "currently: 0" -f "Initialize-HarnessProjects"
     }
     else {
         Add-Choice -k "HARNESSCFG" -d "Connect to Harness" -f "Set-HarnessConfiguration"
+    }
+}
+function Initialize-HarnessProjects {
+    if (-not $config.GoogleEventName) {
+        Send-Update -t 2 -c "Expected a Google Event Name for Harness config!"
+        exit
+    }
+    Set-Prefs -k "HarnessOrg" -v "event_$($config.GoogleEventName.tolower())"
+    Add-Organization
+    $attendees = Get-GroupMembers -m
+    Add-AttendeeRole
+    foreach ($attendee in $attendees) {
+        $cleanProject = ($attendee.email.split("@")[0] -replace '\W', '').tolower()
+        Add-Project -projectName $cleanProject
+        Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
     }
 }
 function Set-HarnessConfiguration {
@@ -988,51 +1004,193 @@ function Test-Connectivity {
     return $response
 }
 function Add-Project {
+    # Create a project and optionally add an administrator
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
         [string]
-        $projectName
+        $projectName,
+        [Parameter()]
+        [string]
+        $admin
     )
     $body = @{
         "project" = @{
-            "orgIdentifier" = $config.harnessOrgId
-            "identifier"    = $projectName.toLower()
-            "name"          = $projectName
+            "orgIdentifier" = $config.HarnessOrg
+            "identifier"    = $cleanProject
+            "name"          = $cleanProject
         }
     } | Convertto-Json
-    $uri = "https://app.harness.io/ng/api/projects?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.harnessOrgId)"
-    $HarnessHeaders
-    Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
-}
-function Add-Organization {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]
-        $orgName
-    )
-    $body = @{
-        "organization" = @{
-            "identifier" = $orgName.tolower()
-            "name"       = $orgName
-        }
-    } | Convertto-Json
-    $uri = "https://app.harness.io/ng/api/organizations?accountIdentifier=$($config.HarnessAccountId)"
+    $uri = "https://app.harness.io/ng/api/projects?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     try {
-        $response = Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
+        Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body | out-null
     }
     catch {
         $errorResponse = $_ | Convertfrom-Json
         if ($errorResponse.code -eq "DUPLICATE_FIELD") {
-            Send-Update -t 2 -c "Just FYI: $orgName already exists in this account"
+            Send-Update -t 2 -c "Just FYI: project $projectName already exists in org $($config.HarnessOrg)."
         }
         else {
             Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
+            exit
+        }   
+    }
+}
+function Get-Roleassignments {
+    $uri = "https://app.harness.io/authz/api/roleassignments?pageIndex=0&pageSize=50&sortOrders=fieldName%3Dstring%26orderType%3DASC&pageToken=string&accountIdentifier=$($config.HarnessAccountId)&orgidentifer=$($config.HarnessOrg)&projectidentifier=skinnyvegetable"
+    Invoke-RestMethod -Method 'GET' -uri $uri -headers $HarnessHeaders
+}
+function Add-HarnessUser {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $userEmail,
+        [Parameter(Mandatory = $true)]
+        [string]
+        $projectName
+    )
+    $uri = "https://app.harness.io/ng/api/user/users?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&projectIdentifier=$projectName"
+    $body = @{
+        "emails"       = @(
+            $userEmail
+        )
+        "roleBindings" = @(
+            @{
+                "roleIdentifier"          = "_project_admin"
+                "roleName"                = "Project Admin"
+                "roleScopeLevel"          = "project"
+                "resourceGroupIdentifier" = "_all_project_level_resources"
+                "managedRole"             = $false
+            }
+        )
+    } | Convertto-Json
+    Invoke-RestMethod -Method 'POST' -uri $uri -body $body -headers $HarnessHeaders -ContentType "application/json" | out-null
+    $uri1 = "https://app.harness.io/ng/api/user/users?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $body1 = @{
+        "emails"       = @(
+            $userEmail
+        )
+        "roleBindings" = @(
+            @{
+                "roleIdentifier"          = "attendeeRole"
+                "roleName"                = "attendeeRole"
+                "roleScopeLevel"          = "organization"
+                "resourceGroupIdentifier" = "_all_organization_level_resources"
+                "resourceGroupName"       = "All Organization Level Resources"
+                "managedRole"             = $false 
+            }
+        )
+    } | Convertto-Json
+    Invoke-RestMethod -Method 'POST' -uri $uri1 -body $body1 -headers $HarnessHeaders -ContentType "application/json" | out-null
+}
+function Add-AttendeeRole {
+    $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/roles"
+    $body = @{
+        "identifier"  = "attendeeRole"
+        "name"        = "attendeeRole"
+        "permissions" = @(
+            "idp_scorecard_view"
+            "idp_scorecard_edit"
+            "idp_scorecard_delete"
+            "idp_layout_view"
+            "idp_layout_edit"
+            "idp_integration_view"
+            "idp_integration_create"
+            "idp_integration_edit"
+            "idp_integration_delete"
+            "core_environment_view"
+            "core_environment_access"
+            "core_environmentgroup_view"
+            "core_environmentgroup_access"
+            "core_governancePolicy_view"
+            "core_governancePolicySets_evaluate"
+            "core_governancePolicy_edit"
+            "core_governancePolicySets_edit"
+            "core_service_view"
+            "core_service_access"
+            "core_template_view"
+            "core_template_access"
+            "core_secret_view"
+            "core_secret_access"
+            "core_connector_view"
+            "core_connector_access"
+            "core_file_view"
+            "core_file_access"
+            "core_dashboards_view"
+            "core_delegate_view"
+            "core_delegateconfiguration_view"
+        )
+    } | Convertto-Json
+    try {
+        Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body | out-null
+    }
+    catch {
+        $errorResponse = $_ | Convertfrom-Json
+        if ($errorResponse.code -eq "DUPLICATE_FIELD") {
+            Send-Update -t 2 -c "Just FYI: attendeeRole already exists."
         }
+        else {
+            Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
+            exit
+        }
+    }
+}
+function Add-ProjectAdmin {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $projectName,
+        [Parameter(Mandatory = $true)]
+        [string]
+        $user
+    )
+    $uri = "https://app.harness.io/authz/api/roleassignments?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&projectIdentifier=$projectName"
+    $body = @{
+        "project" = @{
+            "resourceGroupIdentifier" = "_all_project_level_resources"
+            "roleIdentifier"          = "_project_admin"
+            "principal"               = @{
+                "scopeLevel" = "project"
+                "identifier" = $user
+                "type"       = "user"
+            }
+        }
+    } | Convertto-Json
+    $uri
+    $body
+    try {
+        Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
+    }
+    catch {
+        $errorResponse = $_ | Convertfrom-Json
+        Send-Update -t 2 -c "Faied to add admin $user to project $projectName with error: $errorResponse"
         exit
     }
-    return $response
+}
+function Add-Organization {
+    $harnessOrg = $config.HarnessOrg
+    $body = @{
+        "organization" = @{
+            "identifier" = $harnessOrg
+            "name"       = $harnessOrg
+        }
+    } | Convertto-Json
+    $uri = "https://app.harness.io/ng/api/organizations?accountIdentifier=$($config.HarnessAccountId)"
+    try {
+        Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body | Out-Null
+    }
+    catch {
+        $errorResponse = $_ | Convertfrom-Json
+        if ($errorResponse.code -eq "DUPLICATE_FIELD") {
+            Send-Update -t 2 -c "Just FYI: org $harnessOrg already exists."
+        }
+        else {
+            Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
+            exit
+        }
+    }
 }
 function Get-Organizations {
     # if successful, returns org detail: identifier, name, description, tags
@@ -1050,6 +1208,10 @@ function Get-Organizations {
     }
     return $false
 }
+function Enable-GoogleAuth {
+    $uri = "https://app.harness.io/ng/api/authentication-settings/oauth/update-providers?accountIdentifier=string"
+}
+
 #Main
 Get-Prefs($Myinvocation.MyCommand.Source)
 Get-Events
