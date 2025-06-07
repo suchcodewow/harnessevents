@@ -942,6 +942,7 @@ function Initialize-HarnessProjects {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
+    Get-HarnessConfiguration
 }
 function Set-HarnessConfiguration {
     [CmdletBinding()]
@@ -1037,7 +1038,7 @@ function Add-Project {
     catch {
         $errorResponse = $_ | Convertfrom-Json
         if ($errorResponse.code -eq "DUPLICATE_FIELD") {
-            Send-Update -t 2 -c "Just FYI: project $projectName already exists in org $($config.HarnessOrg)."
+            Send-Update -t 1 -c "Project $projectName already exists in org $($config.HarnessOrg)."
         }
         else {
             Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
@@ -1168,7 +1169,7 @@ function Add-AttendeeRole {
     catch {
         $errorResponse = $_ | Convertfrom-Json
         if ($errorResponse.code -eq "DUPLICATE_FIELD") {
-            Send-Update -t 2 -c "Just FYI: attendeeRole already exists."
+            Send-Update -t 1 -c "AttendeeRole already exists."
         }
         else {
             Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
@@ -1224,7 +1225,7 @@ function Add-Organization {
     catch {
         $errorResponse = $_ | Convertfrom-Json
         if ($errorResponse.code -eq "DUPLICATE_FIELD") {
-            Send-Update -t 2 -c "Just FYI: org $harnessOrg already exists."
+            Send-Update -t 1 -c "Organization $harnessOrg already exists."
         }
         else {
             Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
@@ -1250,6 +1251,14 @@ function Get-Organizations {
 }
 function Enable-GoogleAuth {
     $uri = "https://app.harness.io/ng/api/authentication-settings/oauth/update-providers?accountIdentifier=string"
+    $uri
+}
+function Add-Secrets {
+    $secrets = gcloud secrets list --filter="labels.org:*" --format=json | Convertfrom-Json
+    $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccount)&orgIdentifier=$($config.HarnessOrg)"
+    foreach ($secret in $secrets) {
+        Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -headers $HarnessHeaders -body $body
+    }
 }
 
 #Main
