@@ -1270,17 +1270,23 @@ function Add-Secrets {
 # Google Project Functions
 function New-Project {
     # Get organization of admin project to assign to new project
-    $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | convertfrom-json
+    $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | ConvertFrom-Json
     Set-Prefs -k "GoogleOrgId" -v ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
-    # Use Harness Org as the project for simplicity
+    # Get billing project of admin project to associate with this project
+    $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
+    Set-Prefs -k "GoogleBillingProject" -v $AdminProjectInfo.name.split("/")[1]
+    # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
     # Create new google project
-    Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create --name $($config.GoogleProject) --organization $($config.GoogleOrgId) --set-as-default -q"
+    Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create --name $($config.GoogleProject) --organization $($config.GoogleOrgId)  --set-as-default -q"
     $projectDetails = Send-Update -t 1 -c "Retrieve new project details" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
     Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
+    # Associate project with billing account
+    Send-Update -t 1 -c "Associate billing account" -r "gcloud billing projects link $($config.GoogleProjectId) --billing-account=$($config.GoogleBillingProject)"
+    # Add users to project
     Send-Update -t 1 -c "Add 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
     Send-Update -t 1 -c "Add $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
-    
+
 }
 
 # Azure Resource Group Functions
