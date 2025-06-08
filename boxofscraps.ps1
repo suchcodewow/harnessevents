@@ -650,6 +650,7 @@ function Remove-Event {
     Set-Prefs -k "GoogleEventName"
     Get-Events
 }
+
 # Google Admin Functions
 function Get-GoogleAccessToken {
     # Check for valid token
@@ -761,6 +762,7 @@ function Get-AccessKeys {
     Set-Prefs -k "jerry1" -v $jerry1
     Send-Update -t 1 -c "Projects and administration access loaded successfully"
 }
+
 # Google Workspace Functions
 function Add-UserToGroup {
     param (
@@ -921,7 +923,6 @@ function Get-GroupMembers {
     }
     return $false
 }
-
 
 # Harness Functions
 function Get-HarnessConfiguration {
@@ -1280,10 +1281,11 @@ function Add-Secrets {
 function Get-DelegateConfig {
     $uri = "https://app.harness.io/ng/api/download-delegates/kubernetes?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
-        "name" = "GCP-Delegate"
+        "name" = "gcp-delegate"
     } | ConvertTo-Json
     $response = Invoke-RestMethod -Method 'POST' -ContentType 'application/json' -uri $uri -Headers $HarnessHeaders -body $body
-    return $response
+    $response | Out-File -FilePath gcp-delegate.yaml -Force
+    Send-Update -t 1 -c "Downloaded gcp delegate to gcp-delegate.yaml"
 }
 
 # Google Project Functions
@@ -1333,12 +1335,35 @@ function New-Project {
 function New-k8scluster {
     Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create -m e2-standard-4 --num-nodes=1 --zone=us-west4 harnessevent"
     Send-Update -t 1 -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=us-west4"
+    Add-GCPDelegate
 }
+function Add-GCPDelegate {
+    Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f gcp-delegate.yaml"
+    $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $body = @{
+        "status"     = "CONNECTED"
+        "filterType" = "Delegate"
+    } | Convertto-Json
+    $counter = 0
+    While (-not $DelegateAvailable) {
+        Send-Update -t 1 -c "Waiting for delegate to be available..."
+        $DelegateAvailable = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType "application/json"
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 2 -c "Sorry... delegate did not load correctly."
+            exit
+        }
+        Start-sleep -s 3
+    }
+    Send-Update -t 1 -c "GCP Delegate is connected and ready!"
+
+}
+
 # Azure Resource Group Functions
-# TODO
+## TODO
 
 # AWS Project Functions
-# TODO
+## TODO
 
 #Main
 Test-PreFlight
