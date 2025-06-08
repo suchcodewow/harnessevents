@@ -433,6 +433,18 @@ function Test-PreFlight {
         Exit-PSHostProcess
     }
 }
+function Get-Randomstring {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [int]
+        $characterCount
+    )
+    if (-not $characterCount) { $characterCount = 6 }
+    return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
+
+}
+
 # Event Functions
 function New-Event {
     # Add new event (essentially a google group with attached email)
@@ -984,8 +996,9 @@ function Set-HarnessConfiguration {
                 Set-Prefs -k "HarnessAccountId" -v $checkToken[1]
                 Set-Prefs -k "HarnessPAT" -v $newToken
                 $script:HarnessHeaders = @{
-                    "x-api-key" = $newToken
-                } 
+                    'x-api-key'    = $newToken
+                    'Content-Type' = 'application/json'
+                }
                 $goodToken = $newToken
             }
             else {
@@ -1205,8 +1218,6 @@ function Add-ProjectAdmin {
             }
         }
     } | Convertto-Json
-    $uri
-    $body
     try {
         Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
     }
@@ -1266,9 +1277,20 @@ function Add-Secrets {
         Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -headers $HarnessHeaders -body $body
     }
 }
+function Get-DelegateConfig {
+    $uri = "https://app.harness.io/ng/api/download-delegates/kubernetes?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $body = @{
+        "name" = "GCP-Delegate"
+    } | ConvertTo-Json
+    $response = Invoke-RestMethod -Method 'POST' -ContentType 'application/json' -uri $uri -Headers $HarnessHeaders -body $body
+    return $response
+}
 
 # Google Project Functions
 function New-Project {
+    # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
+    Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
+
     # Get organization of admin project to assign to new project
     $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | ConvertFrom-Json
     Set-Prefs -k "GoogleOrgId" -v ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
@@ -1278,17 +1300,40 @@ function New-Project {
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
     # Create new google project
-    Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create --name $($config.GoogleProject) --organization $($config.GoogleOrgId)  --set-as-default -q"
-    $projectDetails = Send-Update -t 1 -c "Retrieve new project details" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
+    # Check if we already have a project
+    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
+    if ($projectCheck) {
+        # Project already exists- skip creation
+        Send-Update -t 2 -c "Project already exists- this shouldn't have run twice unless testing."
+    }
+    else {
+        # Generate a unique project ID following all of Google's goofy rules
+        if ($config.GoogleProject.length -gt 16) {
+            Set-Prefs -k "GoogleProject" -v $config.GoogleProject.substring(0,16)
+        }
+        $projectID = "$($config.GoogleProject)-$(Get-Randomstring)"
+        $projectID = $projectID.tolower()
+        Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create $projectID --name=""$($config.GoogleProject)"" --organization=$($config.GoogleOrgId)  --set-as-default -q"
+    }
+    while (-not $projectDetails) {
+        $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
+        Start-Sleep -s 2
+    }
     Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
     # Associate project with billing account
     Send-Update -t 1 -c "Associate billing account" -r "gcloud billing projects link $($config.GoogleProjectId) --billing-account=$($config.GoogleBillingProject)"
     # Add users to project
-    Send-Update -t 1 -c "Add 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
-    Send-Update -t 1 -c "Add $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
-
+    Send-Update -t 1 -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
+    Send-Update -t 1 -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
+    # Enable API's needed for workshops
+    Send-Update -t 1 -c "Enabling compute API" -r "gcloud services enable compute.googleapis.com"
+    Send-Update -t 1 -c "Enabling kubernetes API" -r "gcloud services enable container.googleapis.com"
+    New-k8scluster
 }
-
+function New-k8scluster {
+    Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create -m e2-standard-4 --num-nodes=1 --zone=us-west4 harnessevent"
+    Send-Update -t 1 -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=us-west4"
+}
 # Azure Resource Group Functions
 # TODO
 
