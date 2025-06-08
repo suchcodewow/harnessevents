@@ -2,7 +2,7 @@
 param (
     [switch] $help, # show other command options and exit
     [switch] $verbose, # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
-    [switch] $cloudCommands, # enable to show commands
+    [switch] $cloudCommands, # FORCED ON!! enable to show commands
     [switch] $logReset, # enable to reset log between runs
     [int] $users, # Users to create, switches to multiuser mode
     [string] $network, # Specify cloudformation stack in AWS (vs default group 'scw-AWSStack')
@@ -11,7 +11,6 @@ param (
     [switch] $gcp, # use gcp
     [switch] $multiUserMode #Switch to classroom setup for x users
 )
-
 # Core Functions
 function Get-UserName {
     # Generate a new username
@@ -262,7 +261,7 @@ function Get-Prefs($scriptPath) {
     # Do the things for the command line switches selected
     if ($help) { Get-Help }
     if ($verbose) { $script:outputLevel = 0 } else { $script:outputLevel = 1 }
-    if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $false }
+    if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $true }
     if ($logReset) { $script:retainLog = $false } else { $script:retainLog = $true }
     if ($aws) { $script:useAWS = $true }
     if ($azure -eq $true) { $script:useAzure = $true }
@@ -425,7 +424,15 @@ function Add-Choice() {
     }
     [void]$choices.add($choice)
 }
-
+function Test-PreFlight {
+    if (Get-Command gcloud -ErrorAction SilentlyContinue) {
+        Send-Update -t 1 -c "gcloud commands available!"
+    }
+    else {
+        Send-Update -t 2 -c "gcloud commands not found. install via mac with: brew install --cask google-cloud-sdk"
+        Exit-PSHostProcess
+    }
+}
 # Event Functions
 function New-Event {
     # Add new event (essentially a google group with attached email)
@@ -631,7 +638,6 @@ function Remove-Event {
     Set-Prefs -k "GoogleEventName"
     Get-Events
 }
-
 # Google Admin Functions
 function Get-GoogleAccessToken {
     # Check for valid token
@@ -743,7 +749,6 @@ function Get-AccessKeys {
     Set-Prefs -k "jerry1" -v $jerry1
     Send-Update -t 1 -c "Projects and administration access loaded successfully"
 }
-
 # Google Workspace Functions
 function Add-UserToGroup {
     param (
@@ -904,6 +909,7 @@ function Get-GroupMembers {
     }
     return $false
 }
+
 
 # Harness Functions
 function Get-HarnessConfiguration {
@@ -1261,7 +1267,30 @@ function Add-Secrets {
     }
 }
 
+# Google Project Functions
+function New-Project {
+    # Get organization of admin project to assign to new project
+    $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | convertfrom-json
+    Set-Prefs -k "GoogleOrgId" -v ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
+    # Use Harness Org as the project for simplicity
+    Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
+    # Create new google project
+    Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create --name $($config.GoogleProject) --organization $($config.GoogleOrgId) --set-as-default -q"
+    $projectDetails = Send-Update -t 1 -c "Retrieve new project details" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
+    Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
+    Send-Update -t 1 -c "Add 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
+    Send-Update -t 1 -c "Add $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
+    
+}
+
+# Azure Resource Group Functions
+# TODO
+
+# AWS Project Functions
+# TODO
+
 #Main
+Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 Get-Events
 while ($choices.count -gt 0) {
