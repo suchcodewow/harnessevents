@@ -1304,13 +1304,19 @@ function Add-Secrets {
     }
 }
 function Get-DelegateConfig {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $delegateName
+    )
     $uri = "https://app.harness.io/ng/api/download-delegates/kubernetes?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
-        "name" = "gcp-delegate"
+        "name" = $delegateName
     } | ConvertTo-Json
     $response = Invoke-RestMethod -Method 'POST' -ContentType 'application/json' -uri $uri -Headers $HarnessHeaders -body $body
     $response | Out-File -FilePath gcp-delegate.yaml -Force
-    Send-Update -t 1 -c "Downloaded gcp delegate to gcp-delegate.yaml"
+    Send-Update -t 1 -c "Downloaded gcp delegate to $delegateName.yaml"
 }
 
 # Google Project Functions
@@ -1364,8 +1370,10 @@ function New-GCPcluster {
     Add-GCPDelegate
 }
 function Add-GCPDelegate {
+    $delegateName = "gcp-delegate"
     Send-Update -t 0 -c " -->Add-GCPDelegate"
-    Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f gcp-delegate.yaml"
+    Send-Update -t 1 -c "Get GCP Delegate Config" -r "Get-DelegateConfig -d $delegateName"
+    Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f $delegateName.yaml"
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
         "status"     = "CONNECTED"
