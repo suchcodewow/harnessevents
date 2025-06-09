@@ -984,7 +984,17 @@ function Initialize-HarnessProjects {
         }
     }
     Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c $((Get-Projects).count) -f Initialize-HarnessProjects
-    Add-Choice -k "GCPCONFIG" -d "Enable GCP classrom" -c "not enabled" -f New-GCPProject
+    Get-ClassroomStatus
+}
+function Get-ClassroomStatus {
+    $gcpStatus = Get-DelegateStatus -d gcp
+    if ($gcpStatus) {
+        Set-Prefs -k "GCPDelegateId" -v $gcpStatus.name
+        Add-Choice -k "GCPCONFIG" -d "Delete GCP classroom" -c "READY" -f Remove-GCPProject
+    }
+    else {
+        Add-Choice -k "GCPCONFIG" -d "Enable GCP classrom" -c "not enabled" -f New-GCPProject
+    }
     Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
@@ -1337,7 +1347,48 @@ function Get-DelegateStatus {
     } 
     return $false
 }
+function Add-Delegate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $delegatePrefix #expecting gcp/az/aws
+    )
+    Send-Update -t 0 -c " -->Add-Delegate"
+    Send-Update -t 1 -c "Get $delegatePrefix Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
+    Send-Update -t 1 -c "Apply $delegatePrefix delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
+    $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $body = @{
+        "status"     = "CONNECTED"
+        "filterType" = "Delegate"
+    } | Convertto-Json
+    $counter = 0
+    While (-not $DelegateAvailable) {
+        Send-Update -t 1 -c "Waiting for delegate to be available..."
+        $DelegateAvailable = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType "application/json"
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 2 -c "Sorry... delegate did not load correctly."
+            exit
+        }
+        Start-sleep -s 3
+    }
+    Send-Update -t 1 -c "$DelegatePrefix Delegate is connected and ready!"
+    Get-ClassroomStatus
+}
+function Remove-Delegate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $delegatePrefix #expecting gcp/az/aws
+    )
+    $delegatePrefix = $delegatePrefix.toupper()
+    $delegateId = "$($config.delegatePrefix)DelegateId"
+    Send-Update -t 0 -c " -->Remove-Delegate"
+    $uri = "https://app.harness.io/ng/api/delegate-setup/delegate/$delegateId?accountIdentifier=string&orgIdentifier=string&projectIdentifier=string"
 
+}
 # Google Project Functions
 function New-GCPProject {
     Send-Update -t 0 -c " -->New-GCPProject"
@@ -1365,7 +1416,7 @@ function New-GCPProject {
         }
         $projectID = "$($config.GoogleProject)-$(Get-Randomstring)"
         $projectID = $projectID.tolower()
-        Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create $projectID --name=""$($config.GoogleProject)"" --organization=$($config.GoogleOrgId)  --set-as-default -q"
+        Send-Update -t 1 -c "Create $($config.GoogleProject) project" -r "gcloud projects create $projectID --name=""$($config.GoogleProject)"" --organization=$($config.GoogleOrgId) --set-as-default -q"
     }
     while (-not $projectDetails) {
         $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
@@ -1386,33 +1437,14 @@ function New-GCPcluster {
     Send-Update -t 0 -c " -->New-GCPcluster"
     Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent -m e2-standard-4 --num-nodes=1 --zone=us-west4 --no-enable-insecure-kubelet-readonly-port"
     Send-Update -t 1 -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=us-west4"
-    Add-GCPDelegate
-}
-function Add-GCPDelegate {
-    $delegatePrefix = "gcp"
-    Send-Update -t 0 -c " -->Add-GCPDelegate"
-    Send-Update -t 1 -c "Get GCP Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
-    Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
-    $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-    $body = @{
-        "status"     = "CONNECTED"
-        "filterType" = "Delegate"
-    } | Convertto-Json
-    $counter = 0
-    While (-not $DelegateAvailable) {
-        Send-Update -t 1 -c "Waiting for delegate to be available..."
-        $DelegateAvailable = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType "application/json"
-        $counter++
-        if ($counter -ge 10) {
-            Send-Update -t 2 -c "Sorry... delegate did not load correctly."
-            exit
-        }
-        Start-sleep -s 3
-    }
-    Send-Update -t 1 -c "GCP Delegate is connected and ready!"
-
+    Add-Delegate -p gcp
 }
 
+function Remove-GCPProject {
+    Send-Update -t 2 -c "Need remove gcp project logic"
+
+    Get-ClassroomStatus
+}
 ##TODO Azure Resource Group Functions
 function New-AZResourceGroup {
     Send-Update -t 1 -c "Sorry, this is not built yet!"
