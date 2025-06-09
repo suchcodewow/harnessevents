@@ -1308,29 +1308,34 @@ function Get-DelegateConfig {
     param (
         [Parameter(Mandatory = $true)]
         [string]
-        $delegateName
+        $delegatePrefix #expecting gcp/az/aws
     )
     $uri = "https://app.harness.io/ng/api/download-delegates/kubernetes?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
-        "name" = $delegateName
+        "name" = "$delegatePrefix-$($config.GoogleEventName)-delegate"
     } | ConvertTo-Json
     $response = Invoke-RestMethod -Method 'POST' -ContentType 'application/json' -uri $uri -Headers $HarnessHeaders -body $body
-    $response | Out-File -FilePath gcp-delegate.yaml -Force
-    Send-Update -t 1 -c "Downloaded gcp delegate to $delegateName.yaml"
+    $response | Out-File -FilePath "$delegatePrefix.yaml" -Force
+    Send-Update -t 1 -c "Downloaded gcp delegate to $delegatePrefix.yaml"
 }
 function Get-DelegateStatus {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
         [string]
-        $delgateName
+        $delegatePrefix #expecting gcp/az/aws
     )
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
-        "status"     = "CONNECTED"
-        "filterType" = "Delegate"
+        "status"       = "CONNECTED"
+        "filterType"   = "Delegate"
+        "delegateName" = "$delegatePrefix-$($config.GoogleEventName)-delegate"
     } | Convertto-Json
-    Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType "application/json"
+    $response = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType 'application/json'
+    if ($response.resource) {
+        return $response.resource
+    } 
+    return $false
 }
 
 # Google Project Functions
@@ -1384,10 +1389,10 @@ function New-GCPcluster {
     Add-GCPDelegate
 }
 function Add-GCPDelegate {
-    $delegateName = "gcp-delegate"
+    $delegatePrefix = "gcp"
     Send-Update -t 0 -c " -->Add-GCPDelegate"
-    Send-Update -t 1 -c "Get GCP Delegate Config" -r "Get-DelegateConfig -d $delegateName"
-    Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f $delegateName.yaml"
+    Send-Update -t 1 -c "Get GCP Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
+    Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
         "status"     = "CONNECTED"
