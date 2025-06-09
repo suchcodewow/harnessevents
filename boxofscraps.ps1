@@ -1318,6 +1318,20 @@ function Get-DelegateConfig {
     $response | Out-File -FilePath gcp-delegate.yaml -Force
     Send-Update -t 1 -c "Downloaded gcp delegate to $delegateName.yaml"
 }
+function Get-DelegateStatus {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $delgateName
+    )
+    $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $body = @{
+        "status"     = "CONNECTED"
+        "filterType" = "Delegate"
+    } | Convertto-Json
+    Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType "application/json"
+}
 
 # Google Project Functions
 function New-GCPProject {
