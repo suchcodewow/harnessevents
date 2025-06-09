@@ -11,6 +11,7 @@ param (
     [switch] $gcp, # use gcp
     [switch] $multiUserMode #Switch to classroom setup for x users
 )
+
 # Core Functions
 function Get-UserName {
     # Generate a new username
@@ -576,21 +577,20 @@ function Get-Events {
     }
     # Provide option to create a new event
     Add-Event -n "+new event" -i "_create"
+    # Always provide option to change events
+    Add-Choice -k "EVENT" -d "Create/Switch Event" -c $($config.GoogleEventName) -f "Set-Event"
     $eventDefault = $eventList | Where-Object default -eq $true
     if ($eventDefault.count -eq 1) {
         Send-Update -t 0 -c "Setting event with default:  $eventDefault"
         Set-Event -p $eventDefault
     }
-    else {
-        Set-Event
-    }
 }
 function Set-Event {
-    #Prompt for event option
     param(
         [object] $preset # optional preset to bypass selection
     )
     $eventSelected = $preset
+    #Prompt for event option
     while (-not $eventSelected) {
         write-output $eventList | sort-object -property Option | format-table $eventColumns | Out-Host
         $newEvent = read-host -prompt "Select existing or create new event? <enter> to abort"
@@ -613,10 +613,8 @@ function Set-Event {
         Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
         $memberCount = (Get-GroupMembers -m).count
         # Add option to change event later
-        Add-Choice -k "EVENT" -d "Create/Switch Event" -c $($config.GoogleEventName) -f "Set-Event"
         Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $memberCount -f "Add-EventUsers"
-        Add-Choice -k "DELEVENT" -d "Delete event" -f "Remove-Event"
-        # Google setup done, connect Harness next
+        Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
         Get-HarnessConfiguration
     }
 }
@@ -652,9 +650,38 @@ function Remove-Event {
 }
 
 # Google Admin Functions
+function Get-GoogleLogin {
+    Add-Choice -k "GOOGLEUSER" -d "Change Google Login" -c $($config.GoogleUser) -f "Set-GoogleLogin"
+    if ($config.GoogleUser) {
+        Send-Update -t 1 -c "Using existing email: $($config.GoogleUser)"
+        Set-GoogleLogin -p $($config.GoogleUser)
+    }
+}
+function Set-GoogleLogin {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $preset
+    )
+    if ($preset) {
+        $currentUser = $preset
+    }
+    else {
+        Send-Update -t -1 -c "Please login with your @harnessevents.io email!"
+        start-sleep -s 3
+        Send-Update -t 1 -c "Opening login page..." -r "gcloud auth login"
+    }
+    $currentUser = Send-Update -t 1 -c "Confirming Login" -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
+    if (-not $currentUser) { exit } else {
+        Set-Prefs -k "GoogleUser" -v $currentUser
+        Get-Events
+    }
+}
 function Get-GoogleAccessToken {
     # Check for valid token
     if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
+        # Check if token is over 50m old
         $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
         if ($TimeDiff.TotalMinutes -lt 50) {
             Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
@@ -682,7 +709,7 @@ function Get-GoogleAccessToken {
     # client secret of your application configured in the Google Console
     $clientSecret = $($config.jerry1)
     # URL used to obtain start an OAuth authorization flow
-    $url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=$clientId&redirect_uri=http://localhost:$port&response_type=code&scope=$Scope"
+    $url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=$clientId&redirect_uri=http://localhost:$port&response_type=code&scope=$Scope&setLoginHint=$($config.GoogleUser)"
     # Kick off the default web browser
     Start-Process $url
     # Spin up our .NET Core 3.0 application hostig the web server
@@ -808,10 +835,11 @@ function Get-UserGroups {
     return $response.groups
 }
 function New-User {
-    [CmdletBinding()]
+    [CmdletBinding(Mandatory = $true)]
     param (
         [string] $userEmail
     )
+    Send-Update -t 0 -c " -->New-User"
     $uri = 'https://admin.googleapis.com/admin/directory/v1/users'
     $body = @{
         "primaryEmail"              = $userEmail
@@ -819,9 +847,9 @@ function New-User {
             "givenName"  = "Harness"
             "familyName" = "Events"
         }
-        "suspended"                 = false
+        "suspended"                 = $false
         "password"                  = "Harness!"
-        "changePasswordAtNextLogin" = false
+        "changePasswordAtNextLogin" = $false
     } | ConvertTo-Json
     $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
@@ -882,7 +910,7 @@ function New-Group {
             Send-Update -t 1 -c "Group $email created successfully!"
             Set-Prefs -k "GoogleEventName" -v $response.groups.name
             Set-Prefs -k "GoogleEventId" -v $response.groups.id
-            Set-Prefs -k "GoogleEventId" -v $response.groups.email
+            Set-Prefs -k "GoogleEventEmail" -v $response.groups.email
             $success = $true
         }
         else {
@@ -926,28 +954,22 @@ function Get-GroupMembers {
 
 # Harness Functions
 function Get-HarnessConfiguration {
+    Send-Update -t 0 -c " -->Get-HarnessConfiguration"
+    Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration"
     if ($config.HarnessPAT -and $config.HarnessAccountId -and $config.HarnessAccount) {
         Set-HarnessConfiguration -p $config.HarnessPAT
     }
-    else { Set-HarnessConfiguration }
-    # Provide options based on connectivity
-    if ($config.HarnessPAT) {
-        Add-Choice -k "HARNESSCFG" -d "Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration"
-        $harnessProjectCount = $(Get-Projects).count
-        Add-Choice -k "HARNESSSETUP" -d "Create Harness projects" -c $harnessProjectCount -f "Initialize-HarnessProjects"
-    }
-    else {
-        Add-Choice -k "HARNESSCFG" -d "Connect to Harness" -f "Set-HarnessConfiguration"
-    }
+
 }
 function Initialize-HarnessProjects {
+    Send-Update -t 0 -c " -->Initialize-HarnessProjects"
     if (-not $config.GoogleEventName) {
-        Send-Update -t 2 -c "Expected a Google Event Name for Harness config!"
+        Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
         exit
     }
     Set-Prefs -k "HarnessOrg" -v "event_$($config.GoogleEventName.tolower())"
-    Add-Organization
     $attendees = Get-GroupMembers
+    Add-Organization
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
         if ($attendee.role -eq "OWNER") {
@@ -961,7 +983,10 @@ function Initialize-HarnessProjects {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    Get-HarnessConfiguration
+    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c $((Get-Projects).count) -f Initialize-HarnessProjects
+    Add-Choice -k "GCPCONFIG" -d "Enable GCP classrom" -c "not enabled" -f New-GCPProject
+    Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
+    Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
 function Set-HarnessConfiguration {
     [CmdletBinding()]
@@ -970,17 +995,15 @@ function Set-HarnessConfiguration {
         [string]
         $presetToken
     )
-    # Clear existing token data
-    Set-Prefs -k "HarnessAccount"
-    Set-Prefs -k "HarnessAccountId"
-    Set-Prefs -k "HarnessPAT"
+    Send-Update -t 0 -c " -->Set-HarnessConfiguration"
     while (-not $goodToken) {
-        # If there is a cached token, check if it is valid
+        # If there is a cached token, check if it is valid once
         if ($presetToken) {
             Send-Update -t 1 -c "Trying cached token..."
             $newToken = $presetToken
             remove-variable presetToken
         }
+        # Otherwise ask for token
         else {
             $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token <enter to abort>"
             if (!$newToken) {
@@ -988,8 +1011,9 @@ function Set-HarnessConfiguration {
             }
         }
         $checkToken = $newToken.split(".")
+        # Check token for valid format
         if ($checkToken[0] -eq "pat" -and $checkToken.length -eq 4) {
-            Send-Update -t 1 -c "Valid token format. Checking connectivity"
+            Send-Update -t 1 -c "Valid token format. Checking connectivity..."
             $response = Test-Connectivity -harnessToken $newToken
             if ($response) {
                 Send-Update -t 1 -c "Token validation successful!"
@@ -1000,6 +1024,7 @@ function Set-HarnessConfiguration {
                     'x-api-key'    = $newToken
                     'Content-Type' = 'application/json'
                 }
+                Initialize-HarnessProjects
                 $goodToken = $newToken
             }
             else {
@@ -1289,10 +1314,10 @@ function Get-DelegateConfig {
 }
 
 # Google Project Functions
-function New-Project {
+function New-GCPProject {
+    Send-Update -t 0 -c " -->New-GCPProject"
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
-
     # Get organization of admin project to assign to new project
     $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | ConvertFrom-Json
     Set-Prefs -k "GoogleOrgId" -v ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
@@ -1306,7 +1331,7 @@ function New-Project {
     $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
     if ($projectCheck) {
         # Project already exists- skip creation
-        Send-Update -t 2 -c "Project already exists- this shouldn't have run twice unless testing."
+        Send-Update -t 1 -c "Project already exists- skipping creation."
     }
     else {
         # Generate a unique project ID following all of Google's goofy rules
@@ -1319,7 +1344,7 @@ function New-Project {
     }
     while (-not $projectDetails) {
         $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
-        Start-Sleep -s 2
+        Start-Sleep -s 6
     }
     Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
     # Associate project with billing account
@@ -1330,14 +1355,16 @@ function New-Project {
     # Enable API's needed for workshops
     Send-Update -t 1 -c "Enabling compute API" -r "gcloud services enable compute.googleapis.com"
     Send-Update -t 1 -c "Enabling kubernetes API" -r "gcloud services enable container.googleapis.com"
-    New-k8scluster
+    New-GCPcluster
 }
-function New-k8scluster {
-    Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create -m e2-standard-4 --num-nodes=1 --zone=us-west4 harnessevent"
+function New-GCPcluster {
+    Send-Update -t 0 -c " -->New-GCPcluster"
+    Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent -m e2-standard-4 --num-nodes=1 --zone=us-west4 --no-enable-insecure-kubelet-readonly-port"
     Send-Update -t 1 -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=us-west4"
     Add-GCPDelegate
 }
 function Add-GCPDelegate {
+    Send-Update -t 0 -c " -->Add-GCPDelegate"
     Send-Update -t 1 -c "Apply GCP delegate yaml" -r "kubectl apply -f gcp-delegate.yaml"
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
@@ -1359,16 +1386,20 @@ function Add-GCPDelegate {
 
 }
 
-# Azure Resource Group Functions
-## TODO
+##TODO Azure Resource Group Functions
+function New-AZResourceGroup {
+    Send-Update -t 1 -c "Sorry, this is not built yet!"
+}
 
-# AWS Project Functions
-## TODO
+##TODO AWS Project Functions TODO
+function New-AWSProject {
+    Send-Update -t 1 -c "Sorry, this is not built yet!"
+}
 
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
-Get-Events
+Get-GoogleLogin
 while ($choices.count -gt 0) {
     $cmd = Get-Choice($choices)
     if ($cmd) {
