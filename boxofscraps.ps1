@@ -1550,11 +1550,11 @@ function New-AWSProject {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 Get-GoogleLogin
-# while ($choices.count -gt 0) {
-#     $cmd = Get-Choice($choices)
-#     if ($cmd) {
-#         Invoke-Expression $cmd.callFunction
-#     }
-#     else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
-# }
-Add-OrgSecret -s GCPplatform -c worker1.json -f
+while ($choices.count -gt 0) {
+    $cmd = Get-Choice($choices)
+    if ($cmd) {
+        Invoke-Expression $cmd.callFunction
+    }
+    else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
+}
+#Add-OrgSecret -s GCPplatform -c worker1.json -f
