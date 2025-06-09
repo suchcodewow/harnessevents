@@ -1306,12 +1306,97 @@ function Enable-GoogleAuth {
     $uri = "https://app.harness.io/ng/api/authentication-settings/oauth/update-providers?accountIdentifier=string"
     $uri
 }
-function Add-Secrets {
-    $secrets = gcloud secrets list --filter="labels.org:*" --format=json | Convertfrom-Json
-    $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccount)&orgIdentifier=$($config.HarnessOrg)"
-    foreach ($secret in $secrets) {
-        Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -headers $HarnessHeaders -body $body
+function Add-OrgSecret {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $SecretName,
+        [Parameter(Mandatory = $true)]
+        [string]
+        $content, # text or specify location of file and use $file switch
+        [Parameter()]
+        [switch]
+        $file
+    )
+    Send-Update -t 0 -c " -->Add-OrgSecret"
+    #$secrets = gcloud secrets list --filter="labels.org:*" --format=json | Convertfrom-Json
+    if ($file) {
+        # confirm file exists
+        if (-not (Test-Path $content)) {
+            Send-Update -t 2 -c "Cannot upload secret. File not found: $file"
+            return $false
+        }
+        # Add file (google key json, etc)
+        $uri = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+        $form = @{
+            "spec" = "String"
+        } | Convertto-Json
+        #         #File names
+        #         $PathToFile = $content
+
+
+        #         #Byte stream and encoding
+        #         $PackageByteStream = [System.IO.File]::ReadAllBytes("$PathToFile")
+        #         $Encoding = [System.Text.Encoding]::GetEncoding("ISO-8859-1")
+        #         $FileEncoding = $Encoding.GetString($PackageByteStream)
+
+        #         #Create the content body
+        #         $Boundary = (New-Guid).ToString()
+        #         $ContentBody = "--$Boundary
+        # Content-Disposition: form-data; spec=""Json""; name=""yourmom""; uploadedInputStream=""$FileEncoding""
+        # Content-Type: application/octet-stream
+
+
+        # --$Boundary--
+        # "
+
+        #         #Parameter Object
+        #         $Parameters = @{
+        #             Uri         = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+        #             Method      = "Post"
+        #             ContentType = "multipart/form-data; boundary=`"$Boundary`""
+        #             Headers     = $HarnessHeaders
+        #             Body        = $ContentBody
+        #         }
+
+
+        #         Invoke-RestMethod @Parameters
+        $fileBin = [System.IO.File]::ReadAllBytes("$PSScriptRoot\$filePath")
+        $data = @{
+            "spec" = "String"
+            "file" = $fileBin
+        }
+        $temp = Invoke-RestMethod -Uri $uri -Method POST -Body $data -ContentType 'multipart/form-data'
+
+        Write-Output $temp
+        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Form $form -Headers $HarnessHeaders -ContentType "multipart/form-data; charset=iso-8859-1;"
     }
+    else {
+        #Add text
+        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+        $body = @{
+            "secret" = @{
+                "type"          = "SecretText"
+                "name"          = $SecretName
+                "identifier"    = $SecretName
+                "orgIdentifier" = $config.HarnessOrg
+                "spec"          = @{
+                    "type"                    = "SecretTextSpec1"
+                    "secretManagerIdentifier" = "org.harnessSecretManager"
+                    "valueType"               = "Inline"
+                    "value"                   = $content
+                } 
+            } 
+        } | Convertto-Json
+        $uri
+        $body
+        $response = Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
+    }
+    if ($response.data) {
+        return $response.data
+    }
+    return $false
 }
 function Get-DelegateConfig {
     [CmdletBinding()]
@@ -1384,11 +1469,14 @@ function Remove-Delegate {
         $delegatePrefix #expecting gcp/az/aws
     )
     $delegatePrefix = $delegatePrefix.toupper()
-    $delegateId = "$($config.delegatePrefix)DelegateId"
+    $delegateId = $config.($delegatePrefix + "DelegateId")
     Send-Update -t 0 -c " -->Remove-Delegate"
-    $uri = "https://app.harness.io/ng/api/delegate-setup/delegate/$delegateId?accountIdentifier=string&orgIdentifier=string&projectIdentifier=string"
+    $uri = "https://app.harness.io/ng/api/delegate-setup/delegate/$($delegateId)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $DelegateAvailable = Invoke-RestMethod -method 'DELETE' -uri $uri -headers $HarnessHeaders -ContentType "application/json"
+    return $DelegateAvailable
 
 }
+
 # Google Project Functions
 function New-GCPProject {
     Send-Update -t 0 -c " -->New-GCPProject"
@@ -1402,8 +1490,7 @@ function New-GCPProject {
     Set-Prefs -k "GoogleBillingProject" -v $AdminProjectInfo.name.split("/")[1]
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
-    # Create new google project
-    # Check if we already have a project
+    # Create new google project if needed
     $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
     if ($projectCheck) {
         # Project already exists- skip creation
@@ -1428,6 +1515,10 @@ function New-GCPProject {
     # Add users to project
     Send-Update -t 1 -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
     Send-Update -t 1 -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
+    # Create worker, get keys, add to IAM
+    Send-Update -t 1 -c "Create service account" -r "gcloud iam service-accounts create worker1"
+    Send-Update -t 1 -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
+    Send-Update -t 1 -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
     # Enable API's needed for workshops
     Send-Update -t 1 -c "Enabling compute API" -r "gcloud services enable compute.googleapis.com"
     Send-Update -t 1 -c "Enabling kubernetes API" -r "gcloud services enable container.googleapis.com"
@@ -1459,10 +1550,11 @@ function New-AWSProject {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 Get-GoogleLogin
-while ($choices.count -gt 0) {
-    $cmd = Get-Choice($choices)
-    if ($cmd) {
-        Invoke-Expression $cmd.callFunction
-    }
-    else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
-}
+# while ($choices.count -gt 0) {
+#     $cmd = Get-Choice($choices)
+#     if ($cmd) {
+#         Invoke-Expression $cmd.callFunction
+#     }
+#     else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
+# }
+Add-OrgSecret -s GCPplatform -c worker1.json -f

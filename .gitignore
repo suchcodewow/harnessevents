@@ -1,3 +1,4 @@
 *.conf
 *.log
 *.yaml
+*.json
