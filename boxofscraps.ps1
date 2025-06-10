@@ -1318,8 +1318,8 @@ function Enable-GoogleAuth {
 
     } | Convertto-Json
     Invoke-RestMethod -method 'PUT' -ContentType "application/json" -Uri $uri1 -Headers $HarnessHeaders -Body $body | out-null
-    $uri2 = "https://app.harness.io/ng/api/authentication-settings/update-auth-mechanism?accountIdentifier=$($config.HarnessAccountId)&authenticationMechanism=OAUTH" | out-null
-    Invoke-RestMethod -method 'PUT' -Uri $uri2 -Headers $HarnessHeaders
+    $uri2 = "https://app.harness.io/ng/api/authentication-settings/update-auth-mechanism?accountIdentifier=$($config.HarnessAccountId)&authenticationMechanism=OAUTH"
+    Invoke-RestMethod -method 'PUT' -Uri $uri2 -Headers $HarnessHeaders | out-null
 }
 function Add-OrgSecret {
     [CmdletBinding()]
