@@ -835,8 +835,9 @@ function Get-UserGroups {
     return $response.groups
 }
 function New-User {
-    [CmdletBinding(Mandatory = $true)]
+    [CmdletBinding()]
     param (
+        [Parameter(Mandatory = $true)]
         [string] $userEmail
     )
     Send-Update -t 0 -c " -->New-User"
@@ -1528,9 +1529,8 @@ function New-GCPcluster {
     Send-Update -t 0 -c " -->New-GCPcluster"
     Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent -m e2-standard-4 --num-nodes=1 --zone=us-west4 --no-enable-insecure-kubelet-readonly-port"
     Send-Update -t 1 -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=us-west4"
-    Add-Delegate -p gcp
+    Add-Delegate -d gcp
 }
-
 function Remove-GCPProject {
     Send-Update -t 2 -c "Need remove gcp project logic"
 
