@@ -456,6 +456,7 @@ function New-Event {
             return
         }
         $eventName = $newEvent -replace '\W', ''
+        $eventName = $eventName.tolower()
         $newEmail = "event-" + $eventName + "@harnessevents.io"
         Send-Update -t 0 -c "Generated email: $newEmail from value $newEvent"
         # Check if name is in use
@@ -651,10 +652,11 @@ function Remove-Event {
 
 # Google Admin Functions
 function Get-GoogleLogin {
-    Add-Choice -k "GOOGLEUSER" -d "Change Google Login" -c $($config.GoogleUser) -f "Set-GoogleLogin"
-    if ($config.GoogleUser) {
-        Send-Update -t 1 -c "Using existing email: $($config.GoogleUser)"
-        Set-GoogleLogin -p $($config.GoogleUser)
+    $currentUser = Send-Update -t 1 -c "Checking for existing login..." -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
+    Add-Choice -k "GOOGLEUSER" -d "Change Google Login" -c $currentUser -f "Set-GoogleLogin"
+    if ($currentUser) {
+        Send-Update -t 1 -c "Using existing email: $currentUser"
+        Set-GoogleLogin -p $currentUser
     }
 }
 function Set-GoogleLogin {
