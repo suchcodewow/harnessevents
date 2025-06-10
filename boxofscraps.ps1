@@ -972,6 +972,7 @@ function Initialize-HarnessProjects {
     }
     Set-Prefs -k "HarnessOrg" -v "event_$($config.GoogleEventName.tolower())"
     $attendees = Get-GroupMembers
+    Enable-GoogleAuth
     Add-Organization
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
@@ -1306,8 +1307,19 @@ function Get-Organizations {
     return $false
 }
 function Enable-GoogleAuth {
-    $uri = "https://app.harness.io/ng/api/authentication-settings/oauth/update-providers?accountIdentifier=string"
-    $uri
+    $uri1 = "https://app.harness.io/ng/api/authentication-settings/oauth/update-providers?accountIdentifier=$($config.HarnessAccountId)"
+
+
+    $body = @{
+        "allowedProviders" = @(
+            "GOOGLE"
+        )
+        "settingsType"     = "OAUTH"
+
+    } | Convertto-Json
+    Invoke-RestMethod -method 'PUT' -ContentType "application/json" -Uri $uri1 -Headers $HarnessHeaders -Body $body | out-null
+    $uri2 = "https://app.harness.io/ng/api/authentication-settings/update-auth-mechanism?accountIdentifier=$($config.HarnessAccountId)&authenticationMechanism=OAUTH" | out-null
+    Invoke-RestMethod -method 'PUT' -Uri $uri2 -Headers $HarnessHeaders
 }
 function Add-OrgSecret {
     [CmdletBinding()]
@@ -1538,6 +1550,7 @@ function Remove-GCPProject {
 
     Get-ClassroomStatus
 }
+
 ##TODO Azure Resource Group Functions
 function New-AZResourceGroup {
     Send-Update -t 1 -c "Sorry, this is not built yet!"
