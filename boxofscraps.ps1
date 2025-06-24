@@ -225,9 +225,7 @@ function Send-Update {
     )
     $Params = @{}
     if ($whatIf) { $whatIfComment = "!WHATIF! " }
-    if ($run) {
-        $Params['ForegroundColor'] = "Magenta"; $start = "[$whatIfComment>]"
-    }
+    if ($run) { $Params['ForegroundColor'] = "Magenta"; $start = "[$whatIfComment>]" }
     else {
         Switch ($type) {
             0 { $Params['ForegroundColor'] = "DarkBlue"; $start = "[.]" }
@@ -235,6 +233,17 @@ function Send-Update {
             2 { $Params['ForegroundColor'] = "DarkRed"; $start = "[X]" }
             default { $Params['ForegroundColor'] = "Gray"; $start = "" }
         }
+    }
+    if ($outputlevel -eq 0) {
+        $CallStack = Get-PSCallStack
+        if ($CallStack.Count -gt 1) {
+            $CallingFunctionName = $CallStack[1].FunctionName
+            $functionName = " <$($CallingFunctionName)>"
+        }
+        else {
+            $functionName = " <Called Directly>"
+        }
+        $start = "$start$functionName"
     }
     # Format the command to show on screen if user wants to see it
     if ($run -and $showCommands) { $showcmd = " [ $run ] " }
@@ -306,18 +315,18 @@ function Get-Prefs($scriptPath) {
         $script:configFile = "$scriptPath.conf"
         if (Test-Path $configFile) {
             Send-Update -c "Reading config" -t 0
-            $script:config = Get-Content $configFile -Raw | ConvertFrom-Json -AsHashtable
+            $script:config = Get-Content $configFile -Raw | ConvertFrom-Json
         }
         else {
-            $script:config = @{}
-            $config["schemaVersion"] = "2.0"
+            $script:config = @()
+            #$config["schemaVersion"] = "2.0"
             if ($MyInvocation.MyCommand.Name) {
                 $config | ConvertTo-Json | Out-File $configFile
                 Send-Update -c "CREATED config" -t 0
             }
         }
     }
-    Set-Prefs -k userCount -v $users
+    #Set-Prefs -k userCount -v $users
 }
 function Set-Prefs {
     # Set a new keypair value. retrieve with $config.<yourkey>
@@ -328,61 +337,63 @@ function Set-Prefs {
         $v # value
     )
     # Create Users hashtable if needed
-    if (-not $config.Users) { $config.Users = @{} }
-    if ($u) {
-        # Focus on user subkey
-        if ($k) {
-            # Create User nested hashtable if needed
-            if (-not $config.Users.$u) { $config.Users.$u = @{} }
-            if ($v) {
-                # Update User Value
-                Send-Update -c "Updating $u user key: $k -> $v" -t 0
-                $config.Users.$u[$k] = $v 
-            }
-            else {
-                if ($k -and $config.Users.$u.containsKey($k)) {
-                    # Attempt to delete the user's key
-                    Send-Update -c "Deleting $u user key: $k" -t 0
-                    $config.Users.$u.remove($k)
-                }
-                else {
-                    Send-Update -c "$u Key didn't exist: $k" -t 0
-                }
-            }
-        }
-        else {
-            if ($config.Users.$u) {
-                # Attempt to remove the entire user
-                Send-Update -c "Removing $u user" -t 0
-                $config.Users.remove($u)
-            }
-            else {
-                Send-Update -c "User $u didn't exists" -t 0
-            }
-        }
+    #if (-not $config.Users) { $config.Users = @{} }
+    # if ($u) {
+    #     # Focus on user subkey
+    #     if ($k) {
+    #         # Create User nested hashtable if needed
+    #         if (-not $config.Users.$u) { $config.Users.$u = @{} }
+    #         if ($v) {
+    #             # Update User Value
+    #             Send-Update -c "Updating $u user key: $k -> $v" -t 0
+    #             $config.Users.$u[$k] = $v 
+    #         }
+    #         else {
+    #             if ($k -and $config.Users.$u.containsKey($k)) {
+    #                 # Attempt to delete the user's key
+    #                 Send-Update -c "Deleting $u user key: $k" -t 0
+    #                 $config.Users.$u.remove($k)
+    #             }
+    #             else {
+    #                 Send-Update -c "$u Key didn't exist: $k" -t 0
+    #             }
+    #         }
+    #     }
+    #     else {
+    #         if ($config.Users.$u) {
+    #             # Attempt to remove the entire user
+    #             Send-Update -c "Removing $u user" -t 0
+    #             $config.Users.remove($u)
+    #         }
+    #         else {
+    #             Send-Update -c "User $u didn't exists" -t 0
+    #         }
+    #     }
+    # }
+    # else {
+    # Update at main schema level
+    if ($v) {
+        Send-Update -c "Updating key: $k -> $v" -t 0
+        #$config[$k] = $v
+        $config | Add-Member -MemberType NoteProperty -Name $k -Value $v -Force
     }
     else {
-        # Update at main schema level
-        if ($v) {
-            Send-Update -c "Updating key: $k -> $v" -t 0
-            $config[$k] = $v 
+        if ($k -and $config.containsKey($k)
+        ) {
+            Send-Update -c "Deleting config key: $k" -t 0
+            #$config.remove($k)
+            $config.PSObject.Properties.Remove($k)
         }
         else {
-            if ($k -and $config.containsKey($k)
-            ) {
-                Send-Update -c "Deleting config key: $k" -t 0
-                $config.remove($k)
-            }
-            else {
-                Send-Update -c "Key didn't exist: $k" -t 0
-            }
-        }     
-    }
+            Send-Update -c "Key didn't exist: $k" -t 0
+        }
+    }     
+    # }
     if ($MyInvocation.MyCommand.Name) {
         $config | ConvertTo-Json | Out-File $configFile
     }
     else {
-        Send-Update -c "No command name, skipping write" -t 0
+        Send-Update -c "No command name, config will not be saved" -t 0
     }
 }
 function Get-Choice() {
@@ -404,14 +415,21 @@ function Add-Choice() {
         [string] $description, # description of item
         [string] $current, # current selection of item, if applicable
         [string] $function, # function name to call if changing item
-        [object] $parameters # parameters needed in the function
+        [object] $parameters, # parameters needed in the function
+        [switch] $todo # recommend this option if it's the first one with a blank current value
     )
-    # If this key exists, delete it and anything that followed
     Send-Update -c "Add choice: $key" -t 0
+    # If this key exists, delete it and anything that followed
     $keyOption = $choices | Where-Object { $_.key -eq $key } | select-object -expandProperty Option -first 1
     if ($keyOption) {
         $staleOptions = $choices | Where-Object { $_.Option -ge $keyOption }
         $staleOptions | foreach-object { Send-Update -c "Removing $($_.Option) $($_.key)" -t 0; $choices.remove($_) }
+    }
+    # Add todo flag if switch used
+    $todoIndicator = "<----TODO"
+    $existingTodo = $choices | Where-Object { $_.current -eq $todoIndicator }
+    if ($todo -and -not $existingTodo -and -not $current) {
+        $current = $todoIndicator
     }
     $choice = New-Object PSCustomObject -Property @{
         Option         = $choices.count + 1
@@ -451,7 +469,7 @@ function New-Event {
     # Add new event (essentially a google group with attached email)
     Get-GoogleAccessToken
     while (-not $nameselected) {
-        $newEvent = read-host -prompt "Name for new event? (upper/lower characters only) <enter> to abort"
+        $newEvent = read-host -prompt "Name for new event? (lower characters only) <enter> to abort"
         if (-not($newEvent)) {
             return
         }
@@ -466,11 +484,11 @@ function New-Event {
         if (!$response.groups) {
             # Group doesn't exist
             New-Group -e $newEmail -n $eventName
-            Add-UserToGroup -u $config.GoogleUser -o | out-null
-            Send-Update -t 1 -c "Waiting for $($config.GoogleUser) to be registered as group owner"
+            Add-UserToGroup -u $config.InstructorEmail -o | out-null
+            Send-Update -t 1 -c "Waiting for $($config.InstructorEmail) to be registered as group owner"
             while (-not $groupReady) {
                 # Wait until slow ass google registers the new group owner. zzzz.....
-                $membershipCheck = (Get-UserGroups -u $config.GoogleUser | Where-Object { $_.email -eq $newEmail }).count
+                $membershipCheck = (Get-UserGroups -u $config.InstructorEmail | Where-Object { $_.email -eq $newEmail }).count
                 if ($membershipCheck -eq 1) {
                     $groupReady = $true
                 }
@@ -479,7 +497,7 @@ function New-Event {
                     Start-Sleep -s 3
                 }
             }
-            Send-Update -t 1 -c "Successfully added user: $($config.GoogleUser) as owner."
+            Send-Update -t 1 -c "Successfully added user: $($config.InstructorEmail) as owner."
             $nameselected = $newEmail
         }
         else {
@@ -521,7 +539,7 @@ function Add-EventUsers {
     $counter = 1
     Get-GoogleAccessToken
     # Get current total
-    $startingCount = (Get-GroupMembers -m).count
+    $startingCount = (Get-GroupMembers -s).memberCount
     $totalCount = $startingCount + $userCount
     Send-Update -t 1 -c "Group has $startingCount now with goal of $totalCount"
     # Loop to add users
@@ -546,7 +564,7 @@ function Add-EventUsers {
     Send-Update -t 1 -c "Waiting for all users to be available..."
     $memberCounter = 0
     While ($memberCount -lt $totalCount) {
-        $memberCount = (Get-GroupMembers -m).count
+        $memberCount = (Get-GroupMembers -s).memberCount
         Send-Update -t 1 -c "$memberCount of $totalCount"
         Start-Sleep -s 4
         $memberCounter++
@@ -560,11 +578,19 @@ function Add-EventUsers {
 }
 function Get-Events {
     # Check token status/refresh
-    Get-GoogleAccessToken
+    Get-GoogleAccessTokenV2
+    # Create an instructor email account if needed
+    if (!(Get-User -u $config.InstructorEmail)) {
+        New-User -u $config.InstructorEmail
+        Send-Update -t 1 -c "Generated your instructor email: $($config.InstructorEmail)"  
+    }
+    else {
+        #Send-Update -t 1 -c "Your existing instructor email is: $($config.InstructorEmail)"
+    }
     # Create/Clear event list
     $eventList.Clear()
     # Get groups for current user
-    $currentGroups = Get-UserGroups -u $($config.GoogleUser)
+    $currentGroups = Get-UserGroups -u $($config.InstructorEmail)
     foreach ($group in $currentGroups) {
         # Filter to event groups only
         if ($group.email.length -ge 5) {
@@ -579,7 +605,8 @@ function Get-Events {
     # Provide option to create a new event
     Add-Event -n "+new event" -i "_create"
     # Always provide option to change events
-    Add-Choice -k "EVENT" -d "Create/Switch Event" -c $($config.GoogleEventName) -f "Set-Event"
+    Add-Choice -k "EVENT" -d "Create/Switch/Join Event" -c $($config.GoogleEventName) -f "Set-Event" -todo
+    #Add-Choice -k "RESETPW" -d "Reset instructor email" -c $config.InstructorEmail -f "Reset-Password"
     $eventDefault = $eventList | Where-Object default -eq $true
     if ($eventDefault.count -eq 1) {
         Send-Update -t 0 -c "Setting event with default:  $eventDefault"
@@ -612,12 +639,35 @@ function Set-Event {
         Set-Prefs -k "GoogleEventName" -v $eventSelected.name
         Set-Prefs -k "GoogleEventId" -v $eventSelected.id
         Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
-        $memberCount = (Get-GroupMembers -m).count
+        # And reset harness config assuming this new event uses a different account and not preset
+        if (-not $preset) {
+            Set-Prefs -k "HarnessAccount"
+            Set-Prefs -k "HarnessAccountId"
+            Set-Prefs -k "HarnessPAT"
+        }
+        $memberCount = Get-GroupMembers -s
         # Add option to change event later
-        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $memberCount -f "Add-EventUsers"
+        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c "$($memberCount.memberCount) attendee(s)" -f "Add-EventUsers"
+        Add-Choice -k "GETDETAILS" -d "Save event details" -c "$($membercount.ownerCount) instructor(s)" -f "Get-EventDetails"
         Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
         Get-HarnessConfiguration
     }
+}
+function Get-EventDetails {
+    $members = Get-GroupMembers | select-object -property role, email | sort-object -property role -Des
+    $members | Add-Member -MemberType NoteProperty -Name "password" -Value ""
+    foreach ($member in $members) {
+        if ($member.role -eq "MEMBER") {
+            $member.role = "Attendee"
+            $member.password = "Harness!"
+        }
+        else {
+            $member.role = "Instructor"
+        }
+    }
+    $members | Format-Table
+    $members | Export-Csv "$($config.GoogleEventName).csv"
+    Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
 }
 function Remove-Event {
     $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
@@ -625,13 +675,13 @@ function Remove-Event {
         return
     }
     Send-Update -t 1 -c "Deleting Users"
-    $members = Get-GroupMembers -membersOnly
-    foreach ($member in $members) {
+    $members = Get-GroupMembers -s
+    foreach ($member in $members.members) {
         Remove-User -u $member.email
         Send-Update -t 1 -c "Deleted user: $($member.email)"
     }
     While ($memberCount -gt 0) {
-        $memberCount = (Get-GroupMembers -m).count
+        $memberCount = (Get-GroupMembers -s).memberCount
         Send-Update -t 1 -c "$memberCount remaining"
         Start-Sleep -s 4
         $memberCounter++
@@ -650,10 +700,10 @@ function Remove-Event {
     Get-Events
 }
 
-# Google Admin Functions
+# Google Login Functions
 function Get-GoogleLogin {
     $currentUser = Send-Update -t 1 -c "Checking for existing login..." -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
-    Add-Choice -k "GOOGLEUSER" -d "Change Google Login" -c $currentUser -f "Set-GoogleLogin"
+    Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin"
     if ($currentUser) {
         Send-Update -t 1 -c "Using existing email: $currentUser"
         Set-GoogleLogin -p $currentUser
@@ -670,13 +720,13 @@ function Set-GoogleLogin {
         $currentUser = $preset
     }
     else {
-        Send-Update -t -1 -c "Please login with your @harnessevents.io email!"
-        start-sleep -s 3
         Send-Update -t 1 -c "Opening login page..." -r "gcloud auth login"
     }
     $currentUser = Send-Update -t 1 -c "Confirming Login" -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
     if (-not $currentUser) { exit } else {
         Set-Prefs -k "GoogleUser" -v $currentUser
+        # Add an instructor email as well
+        Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
         Get-Events
     }
 }
@@ -754,20 +804,56 @@ function Get-GoogleAccessToken {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
 }
-function Get-GroupKey {
-    # Google requires GroupKey for API calls- retrieve the key from the group name
-    param (
-        [string] $GroupEmail
-    )
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$GroupEmail'"
-    Send-Update -t 0 -c "Looking up key with uri: $uri"
-    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
-    if ($response.groups.id) {
-        return $response.groups.id
+function Get-GoogleAccessTokenV2 {
+    # Check for valid token
+    if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
+        # Check if token is over 50m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            $script:headers = @{
+                "Authorization" = "Bearer $($config.GoogleAccessToken)"
+            }
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google Workspace Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
     }
     else {
-        Send-Update -t 2 -c "NO ID found for URI: $uri"
+        Send-Update -t 1 -c "Token or timestemp missing."
     }
+    # Refresh token
+    Send-Update -t 1 -c "Refreshing token"
+    $project = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
+    if ($project.count -ne 1) {
+        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
+        exit
+    }
+    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
+    #gcloud config set project $($config.AdminProjectId)
+    Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($config.AdminProjectId)" | Out-File -FilePath harnessevents.json
+    if (!(Test-Path("harnessevents.json"))) {
+        Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
+        exit
+    }
+    Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
+    $authorizationCode = Send-Update -t 1 -c "Retrieving account token" -r "gcloud auth print-access-token --scopes='https://www.googleapis.com/auth/admin.directory.user https://www.googleapis.com/auth/admin.directory.group'"
+    #Send-Update -t 1 -c "User authenticated correctly and cloudsdk details retrieved!"
+    #$authorizationCode = Send-Update -t 1 -content "Retrieving access token" -r "gcloud auth print-access-token --impersonate-service-account=$($config.HarnessEventsAccount)"
+    if ($authorizationCode) {
+        Set-Prefs -k "GoogleAccessToken" -v $authorizationCode
+        Set-Prefs -k "GoogleAccessTokenTimestamp" -v $(Get-date)
+        $script:headers = @{
+            "Authorization" = "Bearer $($config.GoogleAccessToken)"
+        }
+        Send-Update -t 1 -c "Successfully retrieved a new token and timestamp."
+
+    }
+    else {
+        Send-Update -t 2 -c "Unexpected error while retrieving access token."
+    }
+    Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
 }
 function Get-AccessKeys {
     $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
@@ -831,18 +917,25 @@ function Get-UserGroups {
         [string]
         $UserEmail
     )
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?userKey=$UserEmail&maxResults=50"
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&userKey=$UserEmail&maxResults=50"
     Send-Update -t 0 -c "Getting Usergroups for uri: $uri"
+    try {
+        $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    }
+    catch {
+        Send-Update -t 2 -c "Oh, GOOOOD! : $($_.Exception.Message)"
+        return $false
+    }
     $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
     return $response.groups
 }
 function New-User {
+    # Create a new google workspace user
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
         [string] $userEmail
     )
-    Send-Update -t 0 -c " -->New-User"
     $uri = 'https://admin.googleapis.com/admin/directory/v1/users'
     $body = @{
         "primaryEmail"              = $userEmail
@@ -856,6 +949,22 @@ function New-User {
     } | ConvertTo-Json
     $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
+}
+function Reset-Password {
+    Send-Update -t 2 -c "Sorry- this is currently a TODO item.  Please contact workshop committee for now."
+    # Reset instructor password to default
+    # $uri = "https://admin.googleapis.com/admin/directory/v1/users/$($config.InstructorEmail)"
+    # Send-Update -t 0 -c "reset uri: $uri"
+    # $body = @{
+    #     "primaryEmail"              = $userEmail
+
+    #     "suspended"                 = $false
+    #     "password"                  = "Harness!"
+    #     "changePasswordAtNextLogin" = $false
+    # } | ConvertTo-Json
+    # $response = Invoke-RestMethod -Method 'Put' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
+    # Send-Update -t 1 -c "Reset password to default: Harness!"
+    # return $response
 }
 function Remove-User {
     [CmdletBinding()]
@@ -876,7 +985,8 @@ function Get-User {
         [string]
         $userName
     )
-    $uri = "https://admin.googleapis.com/admin/directory/v1/users?domain=harnessevents.io&query=email='$userName@harnessevents.io'"
+    if (!$userName.contains("harnessevents.io")) { $userName = "$userName@harnessevents.io" }
+    $uri = "https://admin.googleapis.com/admin/directory/v1/users?domain=harnessevents.io&query=email='$userName'"
     Send-Update -t 0 -c "Looking up user with uri: $uri"
     $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
     if ($response.users) {
@@ -933,9 +1043,9 @@ function Get-GroupMembers {
         [Parameter()]
         [string] $groupEmail,
         [Parameter()]
-        [switch] $membersOnly
+        [switch] $splitIntoGroups # organize the results into owners/members and provided a count
     )
-    # Retrieve group key
+    # Retrieve group key - or use cached default if none provided
     if ($groupEmail) {
         $groupKey = Get-GroupKey -g $groupEmail
     }
@@ -945,27 +1055,47 @@ function Get-GroupMembers {
     $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
     $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
     if ($response.members) {
-        if ($membersOnly) {
-            return $response.members | Where-Object { $_.role -eq "MEMBER" }
+        if ($splitIntoGroups) {
+            $groupMembers = @{
+                "owners"      = $response.members | Where-Object { $_.role -eq "OWNER" }
+                "members"     = $response.members | Where-Object { $_.role -eq "MEMBER" }
+                "ownerCount"  = ($response.members | Where-Object { $_.role -eq "OWNER" }).count
+                "memberCount" = ($response.members | Where-Object { $_.role -eq "MEMBER" }).count
+            }
+            return $groupMembers
         }
         else {
             return $response.members
         }
+        
     }
     return $false
+}
+function Get-GroupKey {
+    # Google requires GroupKey for API calls- retrieve the key from the group name
+    param (
+        [string] $GroupEmail
+    )
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$GroupEmail'"
+    Send-Update -t 0 -c "Looking up key with uri: $uri"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    if ($response.groups.id) {
+        return $response.groups.id
+    }
+    else {
+        Send-Update -t 2 -c "NO ID found for URI: $uri"
+    }
 }
 
 # Harness Functions
 function Get-HarnessConfiguration {
-    Send-Update -t 0 -c " -->Get-HarnessConfiguration"
-    Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration"
+    Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration" -t
     if ($config.HarnessPAT -and $config.HarnessAccountId -and $config.HarnessAccount) {
         Set-HarnessConfiguration -p $config.HarnessPAT
     }
 
 }
 function Initialize-HarnessProjects {
-    Send-Update -t 0 -c " -->Initialize-HarnessProjects"
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
         exit
@@ -1009,7 +1139,6 @@ function Set-HarnessConfiguration {
         [string]
         $presetToken
     )
-    Send-Update -t 0 -c " -->Set-HarnessConfiguration"
     while (-not $goodToken) {
         # If there is a cached token, check if it is valid once
         if ($presetToken) {
@@ -1019,10 +1148,22 @@ function Set-HarnessConfiguration {
         }
         # Otherwise ask for token
         else {
-            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token <enter to abort>"
+            $config.HarnessList | Format-Table -Property option, HarnessAccount, HarnessAccountId
+            $accountChoice = Read-Host "Select cached token or 'a' to add new token"
+            
+            if ($accountChoice.tolower() -eq "a") {
+                # Offer option to add new token
+                $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token <enter to abort>"
+
+            }
+            else {
+                # Get existing token
+                $newToken = $config.HarnessList | Where-Object { $_.option -eq $accountChoice } | select-object -property HarnessPAT
+            }
             if (!$newToken) {
                 return
             }
+
         }
         $checkToken = $newToken.split(".")
         # Check token for valid format
@@ -1034,6 +1175,7 @@ function Set-HarnessConfiguration {
                 Set-Prefs -k "HarnessAccount" -v $response.data.companyName
                 Set-Prefs -k "HarnessAccountId" -v $checkToken[1]
                 Set-Prefs -k "HarnessPAT" -v $newToken
+                Save-HarnessConfig
                 $script:HarnessHeaders = @{
                     'x-api-key'    = $newToken
                     'Content-Type' = 'application/json'
@@ -1050,6 +1192,37 @@ function Set-HarnessConfiguration {
         }
     }
     
+}
+function Save-HarnessConfig {
+    Set-Prefs -k "HarnessAccount" -v $response.data.companyName
+    Set-Prefs -k "HarnessAccountId" -v $checkToken[1]
+    Set-Prefs -k "HarnessPAT" -v $newToken
+    if ($config.HarnessList) {
+        $oldHistory = $config.HarnessList | Sort-object -option
+    }
+    else {
+        $oldHistory = @()
+    }
+    $newHistory = @([pscustomobject]@{
+            "option"           = 1
+            "HarnessAccount"   = $config.HarnessAccount
+            "HarnessAccountId" = $config.HarnessAccountId
+            "HarnessPAT"       = $config.HarnessPAT 
+        })
+    $counter = 2
+    foreach ($item in $oldHistory) {
+        if ($counter -lt 8) {
+            $newHistory += @{
+                "option"           = $counter
+                "HarnessAccount"   = $item.HarnessAccount
+                "HarnessAccountId" = $item.HarnessAccountId
+                "HarnessPAT"       = $item.HarnessPAT 
+            }
+        }
+        $counter++
+    }
+    Set-Prefs -k "HarnessList" -v $newHistory
+
 }
 function Test-Connectivity {
     [CmdletBinding()]
@@ -1334,7 +1507,6 @@ function Add-OrgSecret {
         [switch]
         $file
     )
-    Send-Update -t 0 -c " -->Add-OrgSecret"
     #$secrets = gcloud secrets list --filter="labels.org:*" --format=json | Convertfrom-Json
     if ($file) {
         # confirm file exists
@@ -1454,7 +1626,6 @@ function Add-Delegate {
         [string]
         $delegatePrefix #expecting gcp/az/aws
     )
-    Send-Update -t 0 -c " -->Add-Delegate"
     Send-Update -t 1 -c "Get $delegatePrefix Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
     Send-Update -t 1 -c "Apply $delegatePrefix delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
@@ -1485,16 +1656,17 @@ function Remove-Delegate {
     )
     $delegatePrefix = $delegatePrefix.toupper()
     $delegateId = $config.($delegatePrefix + "DelegateId")
-    Send-Update -t 0 -c " -->Remove-Delegate"
     $uri = "https://app.harness.io/ng/api/delegate-setup/delegate/$($delegateId)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $DelegateAvailable = Invoke-RestMethod -method 'DELETE' -uri $uri -headers $HarnessHeaders -ContentType "application/json"
     return $DelegateAvailable
 
 }
+function Get-FeatureFlag {
+
+}
 
 # Google Project Functions
 function New-GCPProject {
-    Send-Update -t 0 -c " -->New-GCPProject"
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
     # Get organization of admin project to assign to new project
@@ -1540,7 +1712,6 @@ function New-GCPProject {
     New-GCPcluster
 }
 function New-GCPcluster {
-    Send-Update -t 0 -c " -->New-GCPcluster"
     Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent -m e2-standard-4 --num-nodes=1 --zone=us-west4 --no-enable-insecure-kubelet-readonly-port"
     Send-Update -t 1 -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=us-west4"
     Add-Delegate -d gcp
