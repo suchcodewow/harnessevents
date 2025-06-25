@@ -791,22 +791,24 @@ function Get-GoogleAccessTokenV2 {
     }
     # Refresh token
     Send-Update -t 1 -c "Refreshing token"
-    $project = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
+    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
     if ($project.count -ne 1) {
         Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
         exit
     }
     Set-Prefs -k "AdminProjectId" -v $($project.projectId)
-    #gcloud config set project $($config.AdminProjectId)
     Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($config.AdminProjectId)" | Out-File -FilePath harnessevents.json
     if (!(Test-Path("harnessevents.json"))) {
         Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
         exit
     }
+    # Sneak in grabbing the Harness Feature Flag token even though this is a google function. shhhhh!
+    if (-not $config.HarnessFFToken) {
+        $HarnessFFToken = Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsFF' --project=$($config.AdminProjectId)" 
+        Set-Prefs -k "HarnessFFToken" -v $HarnessFFToken
+    }
     Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
     $authorizationCode = Send-Update -t 1 -c "Retrieving account token" -r "gcloud auth print-access-token --scopes='https://www.googleapis.com/auth/admin.directory.user https://www.googleapis.com/auth/admin.directory.group'"
-    #Send-Update -t 1 -c "User authenticated correctly and cloudsdk details retrieved!"
-    #$authorizationCode = Send-Update -t 1 -content "Retrieving access token" -r "gcloud auth print-access-token --impersonate-service-account=$($config.HarnessEventsAccount)"
     if ($authorizationCode) {
         # Save valid token
         Set-Prefs -k "GoogleAccessToken" -v $authorizationCode
@@ -1065,7 +1067,7 @@ function Get-HarnessConfiguration {
     }
 
 }
-function Initialize-HarnessProjects {
+function Add-HarnessConfig {
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
         exit
@@ -1087,7 +1089,7 @@ function Initialize-HarnessProjects {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Initialize-HarnessProjects
+    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessConfig
     Set-Prefs -k "projectsCreated" -v "true"
     Get-ClassroomStatus
 }
@@ -1140,10 +1142,7 @@ function Set-HarnessConfiguration {
             $response = Test-Connectivity -harnessToken $newToken
             if ($response) {
                 Save-HarnessConfig
-                $script:HarnessHeaders = @{
-                    'x-api-key'    = $newToken
-                    'Content-Type' = 'application/json'
-                }
+
                 $goodToken = $newToken
             }
             else {
@@ -1159,9 +1158,8 @@ function Set-HarnessConfiguration {
         Get-ClassroomStatus
     }
     else {
-        Initialize-HarnessProjects
+        Add-HarnessConfig
     }
-    
 }
 function Save-HarnessConfig {
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
@@ -1203,18 +1201,26 @@ function Test-Connectivity {
         $harnessToken
     )
     $harnessAccount = $harnessToken.split(".")[1]
-    $HarnessHeaders = @{
+    $TestHarnessHeaders = @{
         "x-api-key" = $harnessToken
     } 
     $uri = "https://app.harness.io/ng/api/accounts/$harnessAccount"
     try {
-        $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders
+        $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $TestHarnessHeaders
     }
     catch {
         Send-Update -t 2 -c "Failed to connect to Harness API: $($_.Exception.Message)"
         return $false
     }
     Send-Update -t 0 -c "Token validation successful!"
+    $script:HarnessHeaders = @{
+        'x-api-key'    = $harnessToken
+        'Content-Type' = 'application/json'
+    }
+    $script:HarnessFFHeaders = @{
+        'x-api-key' = $config.HarnessFFToken
+        #'Content-Type' = 'application/json'
+    }
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
     Set-Prefs -k "HarnessPAT" -v $harnessToken
@@ -1636,7 +1642,18 @@ function Remove-Delegate {
     return $DelegateAvailable
 
 }
-function Get-FeatureFlag {
+function Get-FeatureFlagStatus {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $flagId
+    )
+    #$uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=Prod1&archived=true"
+    #$uri = "https://harness0.harness.io/gateway/cf/admin/features?routingId=l7B_kbSEQD2wjrM7PShm5w&accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=Prod1&targetIdentifierFilter=fjf_VfuITK2bBrMLg5xV7g&pageSize=10000"
+    $uri = "https://harness0.harness.io/cf/admin/features?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=Prod1&targetIdentifierFilter=fjf_VfuITK2bBrMLg5xV7g&pageSize=10000"
+
+    $response = Invoke-RestMethod -Uri $uri -method 'GET' -Headers $HarnessFFHeaders
 
 }
 
@@ -1702,7 +1719,7 @@ function New-AZResourceGroup {
     Send-Update -t 1 -c "Sorry, this is not built yet!"
 }
 
-##TODO AWS Project Functions TODO
+##TODO AWS Project Functions
 function New-AWSProject {
     Send-Update -t 1 -c "Sorry, this is not built yet!"
 }
