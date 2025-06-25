@@ -332,54 +332,16 @@ function Set-Prefs {
     # Set a new keypair value. retrieve with $config.<yourkey>
     # Values are stored in <script>.conf
     param(
-        $u, # Add this value to a user's settings (mostly for mult-user setup sweetness)
         $k, # key
         $v # value
     )
-    # Create Users hashtable if needed
-    #if (-not $config.Users) { $config.Users = @{} }
-    # if ($u) {
-    #     # Focus on user subkey
-    #     if ($k) {
-    #         # Create User nested hashtable if needed
-    #         if (-not $config.Users.$u) { $config.Users.$u = @{} }
-    #         if ($v) {
-    #             # Update User Value
-    #             Send-Update -c "Updating $u user key: $k -> $v" -t 0
-    #             $config.Users.$u[$k] = $v 
-    #         }
-    #         else {
-    #             if ($k -and $config.Users.$u.containsKey($k)) {
-    #                 # Attempt to delete the user's key
-    #                 Send-Update -c "Deleting $u user key: $k" -t 0
-    #                 $config.Users.$u.remove($k)
-    #             }
-    #             else {
-    #                 Send-Update -c "$u Key didn't exist: $k" -t 0
-    #             }
-    #         }
-    #     }
-    #     else {
-    #         if ($config.Users.$u) {
-    #             # Attempt to remove the entire user
-    #             Send-Update -c "Removing $u user" -t 0
-    #             $config.Users.remove($u)
-    #         }
-    #         else {
-    #             Send-Update -c "User $u didn't exists" -t 0
-    #         }
-    #     }
-    # }
-    # else {
-    # Update at main schema level
     if ($v) {
         Send-Update -c "Updating key: $k -> $v" -t 0
         #$config[$k] = $v
         $config | Add-Member -MemberType NoteProperty -Name $k -Value $v -Force
     }
     else {
-        if ($k -and $config.containsKey($k)
-        ) {
+        if ($k -and $config.$k) {
             Send-Update -c "Deleting config key: $k" -t 0
             #$config.remove($k)
             $config.PSObject.Properties.Remove($k)
@@ -388,7 +350,6 @@ function Set-Prefs {
             Send-Update -c "Key didn't exist: $k" -t 0
         }
     }     
-    # }
     if ($MyInvocation.MyCommand.Name) {
         $config | ConvertTo-Json | Out-File $configFile
     }
@@ -561,6 +522,7 @@ function Add-EventUsers {
         }
         $counter++
     }
+    Set-Prefs -k "projectsCreated"
     Send-Update -t 1 -c "Waiting for all users to be available..."
     $memberCounter = 0
     While ($memberCount -lt $totalCount) {
@@ -702,8 +664,12 @@ function Remove-Event {
 
 # Google Login Functions
 function Get-GoogleLogin {
-    $currentUser = Send-Update -t 1 -c "Checking for existing login..." -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
-    Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin"
+    $myGoogleAccount = Send-Update -t 1 -c "Retrieving local accounts" -r "gcloud auth list --filter=account:'harness.io' --format='value(account)'"
+    if ($myGoogleAccount.count -eq 1) {
+        Send-Update -t 1 -c "Using current account" -r "gcloud config set account $myGoogleAccount  --no-user-output-enabled"
+        $currentUser = $myGoogleAccount
+    }
+    Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin" -t
     if ($currentUser) {
         Send-Update -t 1 -c "Using existing email: $currentUser"
         Set-GoogleLogin -p $currentUser
@@ -722,8 +688,8 @@ function Set-GoogleLogin {
     else {
         Send-Update -t 1 -c "Opening login page..." -r "gcloud auth login"
     }
-    $currentUser = Send-Update -t 1 -c "Confirming Login" -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
-    if (-not $currentUser) { exit } else {
+    $currentUser = Send-Update -t 0 -c "Confirming Login" -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
+    if (-not $currentUser) { return } else {
         Set-Prefs -k "GoogleUser" -v $currentUser
         # Add an instructor email as well
         Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
@@ -842,12 +808,16 @@ function Get-GoogleAccessTokenV2 {
     #Send-Update -t 1 -c "User authenticated correctly and cloudsdk details retrieved!"
     #$authorizationCode = Send-Update -t 1 -content "Retrieving access token" -r "gcloud auth print-access-token --impersonate-service-account=$($config.HarnessEventsAccount)"
     if ($authorizationCode) {
+        # Save valid token
         Set-Prefs -k "GoogleAccessToken" -v $authorizationCode
         Set-Prefs -k "GoogleAccessTokenTimestamp" -v $(Get-date)
+        # Save the name of the google account to use later
+        $googleServiceAccount = gcloud auth list --filter=status:ACTIVE --format='value(account)'
+        Set-Prefs -k "GoogleServiceAccount" -v $googleServiceAccount
         $script:headers = @{
             "Authorization" = "Bearer $($config.GoogleAccessToken)"
         }
-        Send-Update -t 1 -c "Successfully retrieved a new token and timestamp."
+        Send-Update -t 0 -c "Successfully retrieved a new token and timestamp."
 
     }
     else {
@@ -1117,7 +1087,8 @@ function Initialize-HarnessProjects {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c $((Get-Projects).count) -f Initialize-HarnessProjects
+    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Initialize-HarnessProjects
+    Set-Prefs -k "projectsCreated" -v "true"
     Get-ClassroomStatus
 }
 function Get-ClassroomStatus {
@@ -1132,7 +1103,7 @@ function Get-ClassroomStatus {
     Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
-function Set-HarnessConfiguration {
+function Set-HarnessConfiguration_deprecated {
     [CmdletBinding()]
     param (
         [Parameter()]
@@ -1142,8 +1113,9 @@ function Set-HarnessConfiguration {
     while (-not $goodToken) {
         # If there is a cached token, check if it is valid once
         if ($presetToken) {
-            Send-Update -t 1 -c "Trying cached token..."
+            Send-Update -t 0 -c "Trying cached token..."
             $newToken = $presetToken
+            $skipSave = $true
             remove-variable presetToken
         }
         # Otherwise ask for token
@@ -1161,6 +1133,7 @@ function Set-HarnessConfiguration {
                 $newToken = $config.HarnessList | Where-Object { $_.option -eq $accountChoice } | select-object -property HarnessPAT
             }
             if (!$newToken) {
+                write-host -ForegroundColor red "`r`nFine don't pick a valid thing, GOSH!" 
                 return
             }
 
@@ -1175,12 +1148,17 @@ function Set-HarnessConfiguration {
                 Set-Prefs -k "HarnessAccount" -v $response.data.companyName
                 Set-Prefs -k "HarnessAccountId" -v $checkToken[1]
                 Set-Prefs -k "HarnessPAT" -v $newToken
-                Save-HarnessConfig
+                if (-not $skipSave) { Save-HarnessConfig }
                 $script:HarnessHeaders = @{
                     'x-api-key'    = $newToken
                     'Content-Type' = 'application/json'
                 }
-                Initialize-HarnessProjects
+                if ($config.projectsCreated) {
+                    Get-ClassroomStatus
+                }
+                else {
+                    Initialize-HarnessProjects
+                }
                 $goodToken = $newToken
             }
             else {
@@ -1193,12 +1171,72 @@ function Set-HarnessConfiguration {
     }
     
 }
+function Set-HarnessConfiguration {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $presetToken
+    )
+    if ($presetToken) {
+        $response = Test-Connectivity -harnessToken $presetToken
+        if ($response) {
+            Send-Update -t 0 -c "Cached token worked"
+            $goodToken = $presetToken
+        }
+    }
+    while (-not $goodToken) {
+        #Show list of cached tokens
+        $config.HarnessList | Format-Table -Property option, HarnessAccount, HarnessAccountId
+        $accountChoice = Read-Host "Select cached token or 'a' to add new token"
+        if ($accountChoice.tolower() -eq "a") {
+            # Offer option to add new token
+            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token <enter to abort>"
+        }
+        else {
+            # Or use a locally cached token
+            $newToken = $config.HarnessList | Where-Object { $_.option -eq $accountChoice } | select-object -expandproperty HarnessPAT
+        }
+        if (!$newToken) {
+            write-host -ForegroundColor red "`r`nFine don't pick a valid thing, GOSH!" 
+            return
+        }
+        $checkToken = $newToken.split(".")
+        # Check token for valid format
+        if ($checkToken[0] -eq "pat" -and $checkToken.length -eq 4) {
+            Send-Update -t 1 -c "Valid token format. Checking connectivity..."
+            $response = Test-Connectivity -harnessToken $newToken
+            if ($response) {
+                Save-HarnessConfig
+                $script:HarnessHeaders = @{
+                    'x-api-key'    = $newToken
+                    'Content-Type' = 'application/json'
+                }
+                $goodToken = $newToken
+            }
+            else {
+                Send-Update -t 2 -c "That token looked valid, but was rejected by the API. Please retry."
+            }
+        }
+        else {
+            Send-Update -t 2 -c "Bruh, token should start with 'pat' and have 4 sections separated by periods.  Please retry."
+        }
+    }
+    # We have a valid Harness Account- move on to initializing projects for attendees or if done, move on to classroom setup
+    if ($config.projectsCreated) {
+        Get-ClassroomStatus
+    }
+    else {
+        Initialize-HarnessProjects
+    }
+    
+}
 function Save-HarnessConfig {
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $checkToken[1]
     Set-Prefs -k "HarnessPAT" -v $newToken
     if ($config.HarnessList) {
-        $oldHistory = $config.HarnessList | Sort-object -option
+        $oldHistory = $config.HarnessList | Sort-object -property option
     }
     else {
         $oldHistory = @()
@@ -1211,7 +1249,8 @@ function Save-HarnessConfig {
         })
     $counter = 2
     foreach ($item in $oldHistory) {
-        if ($counter -lt 8) {
+        $newItem = $item.HarnessAccount -ne $config.HarnessAccount
+        if ($counter -lt 8 -and $newItem) {
             $newHistory += @{
                 "option"           = $counter
                 "HarnessAccount"   = $item.HarnessAccount
@@ -1243,6 +1282,10 @@ function Test-Connectivity {
         Send-Update -t 2 -c "Failed to connect to Harness API: $($_.Exception.Message)"
         return $false
     }
+    Send-Update -t 0 -c "Token validation successful!"
+    Set-Prefs -k "HarnessAccount" -v $response.data.companyName
+    Set-Prefs -k "HarnessAccountId" -v $harnessAccount
+    Set-Prefs -k "HarnessPAT" -v $harnessToken
     return $response
 }
 function Add-Project {
