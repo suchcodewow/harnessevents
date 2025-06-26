@@ -1077,7 +1077,6 @@ function Add-HarnessConfig {
     $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
     $currentFlags = Get-FeatureFlagStatus
     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-    write-host $flagsNeeded
     foreach ($flag in $flagsNeeded) {
         Update-FeatureFlag -flag $flag.Name -value $flag.Value
     }
@@ -1138,7 +1137,7 @@ function Set-HarnessConfiguration {
         $accountChoice = Read-Host "Select cached token or 'a' to add new token"
         if ($accountChoice.tolower() -eq "a") {
             # Offer option to add new token
-            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token to abort>"
+            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token or <enter> to abort"
         }
         else {
             # Or use a locally cached token
@@ -1237,6 +1236,10 @@ function Test-Connectivity {
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
     Set-Prefs -k "HarnessPAT" -v $harnessToken
+    # OMG Why do 2 API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
+    $fixGodDamnEnv = $response.data.cluster.replace("-","")
+    $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
+    Set-Prefs -k "HarnessEnv" -v $correctEnv
     return $response
 }
 function Add-Project {
@@ -1656,7 +1659,7 @@ function Remove-Delegate {
 
 }
 function Get-FeatureFlagStatus {
-    $uri = "https://harness0.harness.io/cf/admin/features?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=Prod1&targetIdentifierFilter=$($config.HarnessAccountId)&pageSize=10000"
+    $uri = "https://harness0.harness.io/cf/admin/features?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=$($config.HarnessEnv)&targetIdentifierFilter=$($config.HarnessAccountId)&pageSize=10000"
     $response = Invoke-RestMethod -Uri $uri -method 'GET' -Headers $HarnessFFHeaders
     # parse this ridiculous API output for the values relevant to this account
     $currentFlags = [pscustomobject]@{}
@@ -1692,10 +1695,9 @@ function Update-FeatureFlag {
             }
         )
     } | ConvertTo-Json -Depth 10
-    $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=Prod1"
-    #https://harness0.harness.io/gateway/cf/admin/targets/fjf_VfuITK2bBrMLg5xV7g?routingId=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&environmentIdentifier=Prod1
+    $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=$($config.HarnessEnv)"
     $response = Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body
-    Send-Update -t 1 -c "Set feature flag $flag to: $value"
+    Send-Update -t 1 -c "feature flag $flag variation set: $value"
     return $response
 }
 
