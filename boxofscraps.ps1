@@ -1156,6 +1156,7 @@ function Set-HarnessConfiguration {
             if ($response) {
                 Save-HarnessConfig
                 $goodToken = $newToken
+                Set-Prefs -k "projectsCreated"
             }
             else {
                 Send-Update -t 2 -c "That token looked valid, but was rejected by the API. Please retry."
@@ -1691,11 +1692,10 @@ function Update-FeatureFlag {
             }
         )
     } | ConvertTo-Json -Depth 10
-    $body
     $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=Prod1"
-    $uri
     #https://harness0.harness.io/gateway/cf/admin/targets/fjf_VfuITK2bBrMLg5xV7g?routingId=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&environmentIdentifier=Prod1
     $response = Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body
+    Send-Update -t 1 -c "Set feature flag $flag to: $value"
     return $response
 }
 
