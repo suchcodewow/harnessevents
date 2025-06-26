@@ -1239,6 +1239,9 @@ function Test-Connectivity {
     # OMG Why do 2 API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
     $fixGodDamnEnv = $response.data.cluster.replace("-","")
     $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
+    if ($correctEnv -ne "Prod1") {
+        Send-Update -t 2 "$correctEnv isn't the expected environment (Prod1)- just FYI if something doesn't work right."
+    }
     Set-Prefs -k "HarnessEnv" -v $correctEnv
     return $response
 }
