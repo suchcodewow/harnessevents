@@ -318,7 +318,7 @@ function Get-Prefs($scriptPath) {
             $script:config = Get-Content $configFile -Raw | ConvertFrom-Json
         }
         else {
-            $script:config = @()
+            $script:config = [PSCustomObject]@{}
             #$config["schemaVersion"] = "2.0"
             if ($MyInvocation.MyCommand.Name) {
                 $config | ConvertTo-Json | Out-File $configFile
@@ -326,7 +326,6 @@ function Get-Prefs($scriptPath) {
             }
         }
     }
-    #Set-Prefs -k userCount -v $users
 }
 function Set-Prefs {
     # Set a new keypair value. retrieve with $config.<yourkey>
@@ -1074,6 +1073,20 @@ function Add-HarnessConfig {
     }
     Set-Prefs -k "HarnessOrg" -v "event_$($config.GoogleEventName.tolower())"
     $attendees = Get-GroupMembers
+    # Add needed flags
+    $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
+    $currentFlags = Get-FeatureFlagStatus
+    $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+    write-host $flagsNeeded
+    foreach ($flag in $flagsNeeded) {
+        Update-FeatureFlag -flag $flag.Name -value $flag.Value
+    }
+    do {
+        $currentFlags = Get-FeatureFlagStatus
+        $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+        Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
+        Start-Sleep -s 2
+    } until (-not $flagsNeeded)
     Enable-GoogleAuth
     Add-Organization
     Add-AttendeeRole
@@ -1125,7 +1138,7 @@ function Set-HarnessConfiguration {
         $accountChoice = Read-Host "Select cached token or 'a' to add new token"
         if ($accountChoice.tolower() -eq "a") {
             # Offer option to add new token
-            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token <enter to abort>"
+            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token to abort>"
         }
         else {
             # Or use a locally cached token
@@ -1142,7 +1155,6 @@ function Set-HarnessConfiguration {
             $response = Test-Connectivity -harnessToken $newToken
             if ($response) {
                 Save-HarnessConfig
-
                 $goodToken = $newToken
             }
             else {
@@ -1155,6 +1167,7 @@ function Set-HarnessConfiguration {
     }
     # We have a valid Harness Account- move on to initializing projects for attendees or if done, move on to classroom setup
     if ($config.projectsCreated) {
+        Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessConfig
         Get-ClassroomStatus
     }
     else {
@@ -1191,7 +1204,6 @@ function Save-HarnessConfig {
         $counter++
     }
     Set-Prefs -k "HarnessList" -v $newHistory
-
 }
 function Test-Connectivity {
     [CmdletBinding()]
@@ -1203,7 +1215,7 @@ function Test-Connectivity {
     $harnessAccount = $harnessToken.split(".")[1]
     $TestHarnessHeaders = @{
         "x-api-key" = $harnessToken
-    } 
+    }
     $uri = "https://app.harness.io/ng/api/accounts/$harnessAccount"
     try {
         $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $TestHarnessHeaders
@@ -1218,8 +1230,8 @@ function Test-Connectivity {
         'Content-Type' = 'application/json'
     }
     $script:HarnessFFHeaders = @{
-        'x-api-key' = $config.HarnessFFToken
-        #'Content-Type' = 'application/json'
+        'x-api-key'    = $config.HarnessFFToken
+        'Content-Type' = 'application/json'
     }
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
@@ -1643,18 +1655,48 @@ function Remove-Delegate {
 
 }
 function Get-FeatureFlagStatus {
+    $uri = "https://harness0.harness.io/cf/admin/features?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=Prod1&targetIdentifierFilter=$($config.HarnessAccountId)&pageSize=10000"
+    $response = Invoke-RestMethod -Uri $uri -method 'GET' -Headers $HarnessFFHeaders
+    # parse this ridiculous API output for the values relevant to this account
+    $currentFlags = [pscustomobject]@{}
+    foreach ($item in $response.features) {
+        $value = $item.envProperties.variationMap | Where-Object { $_.targets.identifier -eq $($config.HarnessAccountId) } | select-object -expandproperty variation
+        #write-host "$($item.identifier):$value"
+        $currentFlags | Add-Member -MemberType NoteProperty -name $item.identifier -value $value -Force
+    }
+    return $currentFlags
+}
+function Update-FeatureFlag {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory = $true)]
         [string]
-        $flagId
+        $flag,
+        [Parameter(Mandatory = $true)]
+        [string]
+        $value
     )
-    #$uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=Prod1&archived=true"
-    #$uri = "https://harness0.harness.io/gateway/cf/admin/features?routingId=l7B_kbSEQD2wjrM7PShm5w&accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=Prod1&targetIdentifierFilter=fjf_VfuITK2bBrMLg5xV7g&pageSize=10000"
-    $uri = "https://harness0.harness.io/cf/admin/features?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&projectIdentifier=FFOperations&orgIdentifier=PROD&environmentIdentifier=Prod1&targetIdentifierFilter=fjf_VfuITK2bBrMLg5xV7g&pageSize=10000"
-
-    $response = Invoke-RestMethod -Uri $uri -method 'GET' -Headers $HarnessFFHeaders
-
+    $body = @{
+        "instructions" = @(
+            @{
+                "kind"       = "addTargetToFlagsVariationTargetMap"
+                "parameters" = @{
+                    "features" = @(
+                        @{
+                            "identifier" = $flag
+                            "variation"  = $value
+                        }
+                    )
+                }
+            }
+        )
+    } | ConvertTo-Json -Depth 10
+    $body
+    $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=Prod1"
+    $uri
+    #https://harness0.harness.io/gateway/cf/admin/targets/fjf_VfuITK2bBrMLg5xV7g?routingId=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&environmentIdentifier=Prod1
+    $response = Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body
+    return $response
 }
 
 # Google Project Functions
