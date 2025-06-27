@@ -634,28 +634,38 @@ function Remove-Event {
     # This does several things:
     # It will wipe all event users from the Harness account as well as all google accounts
     # It will delete the event email (completely eliminating the event)
-    # It will set the "go forward" feature flags as shown in 
+    # It will set the "go forward" feature flags as shown in featureflagend.json
     $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
     If ($confirm -ne "y") {
         return
     }
-    Send-Update -t 1 -c "Deleting Users"
+    # Remove Harness event
+    $harnessRemoved = Remove-HarnessEventDetails
+    if ($harnessRemoved) {
+        Send-Update -t 0 -c "Successfully removed Harness config"
+    }
+    else {
+        Send-Update -t 2 -c "Failed to remove Harness Config.  It's not safe to delete google event."
+        exit
+    }
+    # Remove google user accounts
+    Send-Update -t 1 -c "Deleting @harnessevents.io google email accounts"
     $members = Get-GroupMembers -s
     foreach ($member in $members.members) {
         Remove-User -u $member.email
-        Send-Update -t 1 -c "Deleted user: $($member.email)"
+        Send-Update -t 0 -c "Deleted user: $($member.email)"
     }
     While ($memberCount -gt 0) {
         $memberCount = (Get-GroupMembers -s).memberCount
-        Send-Update -t 1 -c "$memberCount remaining"
+        Send-Update -t 1 -c "Waiting for delete confirmation for $memberCount accounts"
         Start-Sleep -s 4
         $memberCounter++
         if ($memberCounter -gt 20) {
-            Send-Update -t 2 -c "Something went wrong- users didn't delete."
+            Send-Update -t 2 -c "Something went wrong- @harnessevents.io users didn't fully delete."
             exit
         }
     }
-    Send-Update -t 1 -c "Successfully deleted users"
+    Send-Update -t 0 -c "Successfully deleted users"
     $groupUri = "https://admin.googleapis.com/admin/directory/v1/groups/$($config.GoogleEventId)"
     Invoke-RestMethod -Method 'Delete' -Uri $groupUri -Headers $headers
     Send-Update -t 1 -c "Deleted event: $($config.GoogleEventName)"
@@ -663,6 +673,18 @@ function Remove-Event {
     Set-Prefs -k "GoogleEventId"
     Set-Prefs -k "GoogleEventName"
     Get-Events
+}
+function Get-ClassroomStatus {
+    $gcpStatus = Get-DelegateStatus -d gcp
+    if ($gcpStatus) {
+        Set-Prefs -k "GCPDelegateId" -v $gcpStatus.name
+        Add-Choice -k "GCPCONFIG" -d "Delete GCP classroom" -c "READY" -f Remove-GCPProject
+    }
+    else {
+        Add-Choice -k "GCPCONFIG" -d "Enable GCP classrom" -c "not enabled" -f New-GCPProject
+    }
+    Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
+    Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
 
 # Google Login Functions
@@ -1070,7 +1092,7 @@ function Get-HarnessConfiguration {
     }
 
 }
-function Add-HarnessConfig {
+function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
     # It will enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
     # Then enable google-auth in oauth settings and create an attendee role
@@ -1113,21 +1135,54 @@ function Add-HarnessConfig {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessConfig
+    Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
     Set-Prefs -k "projectsCreated" -v "true"
     Get-ClassroomStatus
 }
-function Get-ClassroomStatus {
-    $gcpStatus = Get-DelegateStatus -d gcp
-    if ($gcpStatus) {
-        Set-Prefs -k "GCPDelegateId" -v $gcpStatus.name
-        Add-Choice -k "GCPCONFIG" -d "Delete GCP classroom" -c "READY" -f Remove-GCPProject
+function Remove-HarnessEventDetails {
+    # Set Harness flags to post-event state
+    $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
+    $currentFlags = Get-FeatureFlagStatus
+    $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+    foreach ($flag in $flagsNeeded) {
+        Update-FeatureFlag -flag $flag.Name -value $flag.Value
     }
-    else {
-        Add-Choice -k "GCPCONFIG" -d "Enable GCP classrom" -c "not enabled" -f New-GCPProject
+    do {
+        $currentFlags = Get-FeatureFlagStatus
+        $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+        Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
+        Start-Sleep -s 2
+    } until (-not $flagsNeeded)
+    # Remove event users
+    Send-Update -t 1 -c "Removing @harnessevents.io users from account: $($config.HarnessAccount)"
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
+    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
+    $eventUsers = $response.data.content | Where-Object { $_.name.Contains("@harnessevents.io") }
+    foreach ($user in $eventUsers) {
+        $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
+        invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
+        Send-Update -t 1 -c "Removed $($user.email) from account $($config.HarnessAccount)"
     }
-    Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
-    Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
+    # Wait for users to be removed
+    $counter = 0
+    Do {
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 2 -c "It took to long for users to be removed."
+            exit
+        }
+        $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
+        $eventUsers = $response.data.content | Where-Object { $_.name.Contains("@harnessevents.io") }
+        Send-Update -t 1 -c "Waiting for $($eventUsers.count) users to be removed..."
+        Start-Sleep -s 2
+
+    } until ($eventUsers.count -eq 0)
+    # This worked- remove cached details for event
+    Set-Prefs -k "HarnessAccount"
+    Set-Prefs -k "HarnessAccount"
+    Set-Prefs -k "HarnessAccount"
+    
+    return $true
 }
 function Set-HarnessConfiguration {
     [CmdletBinding()]
@@ -1179,11 +1234,11 @@ function Set-HarnessConfiguration {
     }
     # We have a valid Harness Account- move on to initializing projects for attendees or if done, move on to classroom setup
     if ($config.projectsCreated) {
-        Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessConfig
+        Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
         Get-ClassroomStatus
     }
     else {
-        Add-HarnessConfig
+        Add-HarnessEventDetails
     }
 }
 function Save-HarnessConfig {
@@ -1508,7 +1563,7 @@ function Enable-GoogleAuth {
 }
 function Add-OrgSecrets {
     # Load all secrets from administration secret manager
-    # TODO: add support for json files. mostly this entails more internal sobbing at the quality of Harness API
+    # TODO: add support for json files. mostly this entails a good cry over the quality of Harness API before rallying to do it
     $orgSecrets = gcloud secrets list --filter="name ~ org*" --format="value(NAME)" 
     foreach ($secret in $orgSecrets) {
         $secretValue = gcloud secrets versions access latest --secret=$secret
@@ -1533,8 +1588,9 @@ function Add-OrgSecrets {
                 }
             }
         } | Convertto-Json
-        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=event_shawnsbigevent&privateSecret=false"
+        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
         Try {
+            Send-Update -t 1 -c "Adding secret: $secretID"
             Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body
         }
         Catch {
@@ -1544,6 +1600,8 @@ function Add-OrgSecrets {
             }
             else {
                 Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+                Send-Update -t 2 -c "Uri was: $uri"
+                Send-Update -t 2 -c "Body was: $body"
                 #exit
             }   
         }
@@ -1569,6 +1627,7 @@ function Add-OrgTemplates {
                     $addThisLine = $false
                     $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&"
                     $contentType = "application/json"
+                    $templateType = "template"
                 }
                 "connector:" { 
                     $modifiedTemplate += "$line`r`n"
@@ -1579,6 +1638,7 @@ function Add-OrgTemplates {
                     $addThisLine = $false
                     $uri = "https://app.harness.io/gateway/ng/api/connectors?"
                     $contentType = "text/yaml"
+                    $templateType = "connector"
                 }
             }
             if ($line.length -ge 7 -and $line.substring(0,7) -eq "  name:") {
@@ -1607,13 +1667,11 @@ function Add-OrgTemplates {
             'x-api-key' = $config.HarnessPAT
         }
         Try {
-            Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType
+            Send-Update -t 1 -c "Adding org $($templateType): $templateId"
+            Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType | Out-null
         }
         Catch {
             # Generates a System.Management.Automation.ErrorRecord
-            # write-host "CategoryInfo: $($_.CategoryInfo)"
-            # write-host "ErrorDetails: $($_.ErrorDetails)"
-            # write-host "Exception: $($_.Exception)"
             if ($_.Exception.Response.StatusCode.value__ -ne 401) {
                 $errorResponse = $_ | Convertfrom-Json
                 if ($errorResponse.message.contains("already exists")) {
