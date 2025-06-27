@@ -386,7 +386,7 @@ function Add-Choice() {
         $staleOptions | foreach-object { Send-Update -c "Removing $($_.Option) $($_.key)" -t 0; $choices.remove($_) }
     }
     # Add todo flag if switch used
-    $todoIndicator = "<----TODO"
+    $todoIndicator = "<- recommended next step"
     $existingTodo = $choices | Where-Object { $_.current -eq $todoIndicator }
     if ($todo -and -not $existingTodo -and -not $current) {
         $current = $todoIndicator
@@ -631,6 +631,10 @@ function Get-EventDetails {
     Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
 }
 function Remove-Event {
+    # This does several things:
+    # It will wipe all event users from the Harness account as well as all google accounts
+    # It will delete the event email (completely eliminating the event)
+    # It will set the "go forward" feature flags as shown in 
     $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
     If ($confirm -ne "y") {
         return
@@ -1561,7 +1565,7 @@ function Add-OrgTemplates {
                     $modifiedTemplate += "  name: $templateName`r`n"
                     $modifiedTemplate += "  identifier: $templateId`r`n"
                     $modifiedTemplate += "  versionLabel: ""1""`r`n"
-                    $modifiedTemplate += "  orgIdentifier: event_shawnsbigevent`r`n"
+                    $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
                     $addThisLine = $false
                     $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&"
                     $contentType = "application/json"
@@ -1571,7 +1575,7 @@ function Add-OrgTemplates {
                     $modifiedTemplate += "  name: $templateName`r`n"
                     $modifiedTemplate += "  identifier: $templateId`r`n"
                     $modifiedTemplate += "  versionLabel: ""1""`r`n"
-                    $modifiedTemplate += "  orgIdentifier: event_shawnsbigevent`r`n"
+                    $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
                     $addThisLine = $false
                     $uri = "https://app.harness.io/gateway/ng/api/connectors?"
                     $contentType = "text/yaml"
@@ -1597,25 +1601,35 @@ function Add-OrgTemplates {
             write-host "$yaml isn't a supported type (template: or connector:)"
         }
         else {
-            $uri += "accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=event_shawnsbigevent"
+            $uri += "accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
         }
         $templateheaders = @{
-            'x-api-key' = "pat.fjf_VfuITK2bBrMLg5xV7g.6842508a3245d24b0ec199bb.ketglDHpBQZgaUdjveMd"
+            'x-api-key' = $config.HarnessPAT
         }
-        #$uri = "https://app.harness.io/template/api/templates?accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=event_shawnsbigevent&storeType=INLINE&isNewTemplate=true@comments="
         Try {
             Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType
         }
         Catch {
-            $errorResponse = $_ | Convertfrom-Json
-            if ($errorResponse.message.contains("already exists")) {
-                #Send-Update -t 0 -c "Template: $templateId already exists."
-                write-host "Template: $templateId already exists."
+            # Generates a System.Management.Automation.ErrorRecord
+            # write-host "CategoryInfo: $($_.CategoryInfo)"
+            # write-host "ErrorDetails: $($_.ErrorDetails)"
+            # write-host "Exception: $($_.Exception)"
+            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("already exists")) {
+                    Send-Update -t 0 -c "Template: $templateId already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+                }  
             }
             else {
-                Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
-                #exit
-            }   
+                Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
+                Send-Update -t 2 -c "URI: $uri"
+                Send-Update -t 2 -c "ContentType: $contentType"
+                Send-Update -t 2 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 2 -c "template yaml: $modifiedTemplate" 
+            }
         }
     }
 }
