@@ -1067,6 +1067,12 @@ function Get-HarnessConfiguration {
 
 }
 function Add-HarnessConfig {
+    # This step does a bunch of things right now (maybe break it down?)
+    # It will enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
+    # Then enable google-auth in oauth settings and create an attendee role
+    # It will load all secrets starting with 'org' from google secret manager
+    # It will load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
+    # It will add the organization for the chosen event, add projects for everyone, and add users to the attendee role
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
         exit
@@ -1087,6 +1093,8 @@ function Add-HarnessConfig {
         Start-Sleep -s 2
     } until (-not $flagsNeeded)
     Enable-GoogleAuth
+    Add-OrgSecrets
+    Add-OrgTemplates
     Add-Organization
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
@@ -1494,96 +1502,122 @@ function Enable-GoogleAuth {
     $uri2 = "https://app.harness.io/ng/api/authentication-settings/update-auth-mechanism?accountIdentifier=$($config.HarnessAccountId)&authenticationMechanism=OAUTH"
     Invoke-RestMethod -method 'PUT' -Uri $uri2 -Headers $HarnessHeaders | out-null
 }
-function Add-OrgSecret {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]
-        $SecretName,
-        [Parameter(Mandatory = $true)]
-        [string]
-        $content, # text or specify location of file and use $file switch
-        [Parameter()]
-        [switch]
-        $file
-    )
-    #$secrets = gcloud secrets list --filter="labels.org:*" --format=json | Convertfrom-Json
-    if ($file) {
-        # confirm file exists
-        if (-not (Test-Path $content)) {
-            Send-Update -t 2 -c "Cannot upload secret. File not found: $file"
-            return $false
+function Add-OrgSecrets {
+    # Load all secrets from administration secret manager
+    # TODO: add support for json files. mostly this entails more internal sobbing at the quality of Harness API
+    $orgSecrets = gcloud secrets list --filter="name ~ org*" --format="value(NAME)" 
+    foreach ($secret in $orgSecrets) {
+        $secretValue = gcloud secrets versions access latest --secret=$secret
+        $ContentType = "application/json"
+        $secretID = $secret.substring(3)
+        $secretName = $secretID.replace("_"," ")
+        $templateheaders = @{
+            'x-api-key' = $($config.HarnessPAT)
         }
-        # Add file (google key json, etc)
-        $uri = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-        $form = @{
-            "spec" = "String"
-        } | Convertto-Json
-        #         #File names
-        #         $PathToFile = $content
-
-
-        #         #Byte stream and encoding
-        #         $PackageByteStream = [System.IO.File]::ReadAllBytes("$PathToFile")
-        #         $Encoding = [System.Text.Encoding]::GetEncoding("ISO-8859-1")
-        #         $FileEncoding = $Encoding.GetString($PackageByteStream)
-
-        #         #Create the content body
-        #         $Boundary = (New-Guid).ToString()
-        #         $ContentBody = "--$Boundary
-        # Content-Disposition: form-data; spec=""Json""; name=""yourmom""; uploadedInputStream=""$FileEncoding""
-        # Content-Type: application/octet-stream
-
-
-        # --$Boundary--
-        # "
-
-        #         #Parameter Object
-        #         $Parameters = @{
-        #             Uri         = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-        #             Method      = "Post"
-        #             ContentType = "multipart/form-data; boundary=`"$Boundary`""
-        #             Headers     = $HarnessHeaders
-        #             Body        = $ContentBody
-        #         }
-
-
-        #         Invoke-RestMethod @Parameters
-        $fileBin = [System.IO.File]::ReadAllBytes("$PSScriptRoot\$filePath")
-        $data = @{
-            "spec" = "String"
-            "file" = $fileBin
-        }
-        $temp = Invoke-RestMethod -Uri $uri -Method POST -Body $data -ContentType 'multipart/form-data'
-
-        Write-Output $temp
-        $response = Invoke-RestMethod -Method 'POST' -Uri $uri -Form $form -Headers $HarnessHeaders -ContentType "multipart/form-data; charset=iso-8859-1;"
-    }
-    else {
-        #Add text
-        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
         $body = @{
-            "secret" = @{
-                "type"          = "SecretText"
-                "name"          = $SecretName
-                "identifier"    = $SecretName
-                "orgIdentifier" = $config.HarnessOrg
-                "spec"          = @{
-                    "type"                    = "SecretTextSpec1"
-                    "secretManagerIdentifier" = "org.harnessSecretManager"
-                    "valueType"               = "Inline"
-                    "value"                   = $content
-                } 
-            } 
+            secret = @{
+                type          = "SecretText"
+                name          = $secretName
+                identifier    = $secretID
+                orgIdentifier = $($config.HarnessOrg)
+                spec          = @{
+                    errorMessageForInvalidYaml = "string"
+                    secretManagerIdentifier    = "org.harnessSecretManager"
+                    type                       = "SecretTextSpec1"
+                    valueType                  = "Inline"
+                    value                      = $secretValue
+                }
+            }
         } | Convertto-Json
-        $uri
-        $body
-        $response = Invoke-RestMethod -Method 'POST' -ContentType "application/json" -uri $uri -Headers $HarnessHeaders -body $body
+        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=event_shawnsbigevent&privateSecret=false"
+        Try {
+            Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body
+        }
+        Catch {
+            $errorResponse = $_ | Convertfrom-Json
+            if ($errorResponse.message.contains("already exists")) {
+                Send-Update -t 0 -c "Secret: $secretID already exists."
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+                #exit
+            }   
+        }
+
     }
-    if ($response.data) {
-        return $response.data
+}
+function Add-OrgTemplates {
+    $OrgTemplates = gcloud storage ls gs://harnesseventsdata/OrgTemplates/*.yaml
+    foreach ($yaml in $OrgTemplates) {
+        $modifiedTemplate = ""
+        $templateId = (split-path $yaml -Leaf).split(".")[0]
+        $templateName = $templateId.Replace("_"," ")
+        $template = gcloud storage cat $yaml
+        foreach ($line in $template) {
+            $addThisLine = $true
+            switch ($line.trim()) {
+                "template:" {
+                    $modifiedTemplate += "$line`r`n"
+                    $modifiedTemplate += "  name: $templateName`r`n"
+                    $modifiedTemplate += "  identifier: $templateId`r`n"
+                    $modifiedTemplate += "  versionLabel: ""1""`r`n"
+                    $modifiedTemplate += "  orgIdentifier: event_shawnsbigevent`r`n"
+                    $addThisLine = $false
+                    $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&"
+                    $contentType = "application/json"
+                }
+                "connector:" { 
+                    $modifiedTemplate += "$line`r`n"
+                    $modifiedTemplate += "  name: $templateName`r`n"
+                    $modifiedTemplate += "  identifier: $templateId`r`n"
+                    $modifiedTemplate += "  versionLabel: ""1""`r`n"
+                    $modifiedTemplate += "  orgIdentifier: event_shawnsbigevent`r`n"
+                    $addThisLine = $false
+                    $uri = "https://app.harness.io/gateway/ng/api/connectors?"
+                    $contentType = "text/yaml"
+                }
+            }
+            if ($line.length -ge 7 -and $line.substring(0,7) -eq "  name:") {
+                $addThisLine = $false
+            }
+            if ($line.length -ge 13 -and $line.substring(0,13) -eq "  identifier:") {
+                $addThisLine = $false
+            }
+            if ($line.length -ge 15 -and $line.substring(0,15) -eq "  versionLabel:") {
+                $addThisLine = $false
+            }
+            if ($line.length -ge 16 -and $line.substring(0,16) -eq "  orgIdentifier:") {
+                $addThisLine = $false
+            }
+            if ($addThisLine) {
+                $modifiedTemplate += "$line`r`n"
+            }
+        }
+        if (-not $uri) {
+            write-host "$yaml isn't a supported type (template: or connector:)"
+        }
+        else {
+            $uri += "accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=event_shawnsbigevent"
+        }
+        $templateheaders = @{
+            'x-api-key' = "pat.fjf_VfuITK2bBrMLg5xV7g.6842508a3245d24b0ec199bb.ketglDHpBQZgaUdjveMd"
+        }
+        #$uri = "https://app.harness.io/template/api/templates?accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=event_shawnsbigevent&storeType=INLINE&isNewTemplate=true@comments="
+        Try {
+            Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType
+        }
+        Catch {
+            $errorResponse = $_ | Convertfrom-Json
+            if ($errorResponse.message.contains("already exists")) {
+                #Send-Update -t 0 -c "Template: $templateId already exists."
+                write-host "Template: $templateId already exists."
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+                #exit
+            }   
+        }
     }
-    return $false
 }
 function Get-DelegateConfig {
     [CmdletBinding()]
