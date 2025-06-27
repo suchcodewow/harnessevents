@@ -386,7 +386,7 @@ function Add-Choice() {
         $staleOptions | foreach-object { Send-Update -c "Removing $($_.Option) $($_.key)" -t 0; $choices.remove($_) }
     }
     # Add todo flag if switch used
-    $todoIndicator = "<- recommended next step"
+    $todoIndicator = "<---recommended----"
     $existingTodo = $choices | Where-Object { $_.current -eq $todoIndicator }
     if ($todo -and -not $existingTodo -and -not $current) {
         $current = $todoIndicator
@@ -454,7 +454,7 @@ function New-Event {
                 }
                 else {
                     Send-Update -t 1 -c "User not yet registered..."
-                    Start-Sleep -s 3
+                    Start-Sleep -s 6
                 }
             }
             Send-Update -t 1 -c "Successfully added user: $($config.InstructorEmail) as owner."
@@ -606,10 +606,13 @@ function Set-Event {
             Set-Prefs -k "HarnessAccountId"
             Set-Prefs -k "HarnessPAT"
         }
-        $memberCount = Get-GroupMembers -s
+        $members = Get-GroupMembers -s
         # Add option to change event later
-        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c "$($memberCount.memberCount) attendee(s)" -f "Add-EventUsers"
-        Add-Choice -k "GETDETAILS" -d "Save event details" -c "$($membercount.ownerCount) instructor(s)" -f "Get-EventDetails"
+        if ($members.memberCount -gt 0) {
+            $existingUsers = "$($members.memberCount) attendee(s)"
+        }
+        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $existingUsers -f "Add-EventUsers" -t
+        Add-Choice -k "GETDETAILS" -d "Save event details" -c "$($members.ownerCount) instructor(s)" -f "Get-EventDetails"
         Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
         Get-HarnessConfiguration
     }
@@ -653,7 +656,7 @@ function Remove-Event {
     $members = Get-GroupMembers -s
     foreach ($member in $members.members) {
         Remove-User -u $member.email
-        Send-Update -t 0 -c "Deleted user: $($member.email)"
+        Send-Update -t 1 -c "Deleted user: $($member.email)"
     }
     While ($memberCount -gt 0) {
         $memberCount = (Get-GroupMembers -s).memberCount
@@ -1119,9 +1122,10 @@ function Add-HarnessEventDetails {
         Start-Sleep -s 2
     } until (-not $flagsNeeded)
     Enable-GoogleAuth
+    Add-Organization
     Add-OrgSecrets
     Add-OrgTemplates
-    Add-Organization
+
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
         if ($attendee.role -eq "OWNER") {
@@ -1179,8 +1183,8 @@ function Remove-HarnessEventDetails {
     } until ($eventUsers.count -eq 0)
     # This worked- remove cached details for event
     Set-Prefs -k "HarnessAccount"
-    Set-Prefs -k "HarnessAccount"
-    Set-Prefs -k "HarnessAccount"
+    Set-Prefs -k "HarnessAccountId"
+    Set-Prefs -k "HarnessPAT"
     
     return $true
 }
@@ -1303,6 +1307,7 @@ function Test-Connectivity {
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
     Set-Prefs -k "HarnessPAT" -v $harnessToken
+    $choices | where-object { $_.key -eq "HARNESSCFG" } | ForEach-Object { $_.current = $config.HarnessAccount }
     # OMG Why do 2 API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
     $fixGodDamnEnv = $response.data.cluster.replace("-","")
     $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
@@ -1588,10 +1593,10 @@ function Add-OrgSecrets {
                 }
             }
         } | Convertto-Json
-        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=fjf_VfuITK2bBrMLg5xV7g&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
+        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
         Try {
             Send-Update -t 1 -c "Adding secret: $secretID"
-            Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body
+            Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
         }
         Catch {
             $errorResponse = $_ | Convertfrom-Json
