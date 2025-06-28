@@ -404,6 +404,8 @@ function Add-Choice() {
     [void]$choices.add($choice)
 }
 function Test-PreFlight {
+    # Make sure commands needed are available
+    # TODO add aws and azure commands when finished
     if (Get-Command gcloud -ErrorAction SilentlyContinue) {
         Send-Update -t 1 -c "gcloud commands available!"
     }
@@ -1893,4 +1895,3 @@ while ($choices.count -gt 0) {
     }
     else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
 }
-#Add-OrgSecret -s GCPplatform -c worker1.json -f
