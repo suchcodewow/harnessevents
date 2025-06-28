@@ -856,6 +856,7 @@ function Get-GoogleAccessTokenV2 {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
     Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
 }
 function Get-AccessKeys {
     $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
