@@ -411,7 +411,7 @@ function Test-PreFlight {
     }
     else {
         Send-Update -t 2 -c "gcloud commands not found. install via mac with: brew install --cask google-cloud-sdk"
-        Exit-PSHostProcess
+        exit
     }
 }
 function Get-Randomstring {
@@ -701,7 +701,7 @@ function Get-GoogleLogin {
     }
     Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin" -t
     if ($currentUser) {
-        Send-Update -t 1 -c "Using existing email: $currentUser"
+        Send-Update -t 0 -c "Using existing email: $currentUser"
         Set-GoogleLogin -p $currentUser
     }
 }
