@@ -487,7 +487,7 @@ function Add-Event {
 function Add-EventUsers {
     # Ask how many users are needed
     while (-not $usersToAdd) {
-        $userCount = read-host -prompt "How many users to add to $($config.GoogleEventName)? <enter> to abort"
+        $userCount = read-host -prompt "How many users to add to $($config.GoogleEventName)-include yourself and other instructors? <enter> to abort"
         if (-not($userCount)) {
             return
         }
@@ -614,18 +614,21 @@ function Set-Event {
             $existingUsers = "$($members.memberCount) attendee(s)"
         }
         Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $existingUsers -f "Add-EventUsers" -t
-        Add-Choice -k "GETDETAILS" -d "Save event details" -c "$($members.ownerCount) instructor(s)" -f "Get-EventDetails"
+        Add-Choice -k "GETDETAILS" -d "Save event details" -c "$($members.ownerCount) instructor(s)" -f "Save-EventDetails"
         Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
         Get-HarnessConfiguration
     }
 }
-function Get-EventDetails {
+function Save-EventDetails {
     $members = Get-GroupMembers | select-object -property role, email | sort-object -property role -Des
     $members | Add-Member -MemberType NoteProperty -Name "password" -Value ""
+    $members | Add-Member -MemberType NoteProperty -Name "HarnessLink" -Value ""
     foreach ($member in $members) {
+        $cleanProject = ($member.email.split("@")[0] -replace '\W', '').tolower()
         if ($member.role -eq "MEMBER") {
             $member.role = "Attendee"
             $member.password = "Harness!"
+            $member.HarnessLink = "https://app.harness.io/ng/account/$($config.HarnessAccountId)/module/cd/orgs/$($config.HarnessOrg)/projects/$($cleanProject)/pipelines"
         }
         else {
             $member.role = "Instructor"
@@ -633,6 +636,13 @@ function Get-EventDetails {
     }
     $members | Format-Table
     $members | Export-Csv "$($config.GoogleEventName).csv"
+    if ($config.GoogleProjectId) {
+        $GoogleDetails = "`r`n"
+        $GoogleDetails += "Google Kubernetes Overview,https://console.cloud.google.com/kubernetes/list/overview?project=$($config.GoogleProjectId)`r`n"
+        $GoogleDetails += "Google Artifact Registry,https://console.cloud.google.com/artifacts?project=$($config.GoogleProjectId)`r`n"
+        $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
+    }
+    $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
     Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
 }
 function Remove-Event {
@@ -1126,11 +1136,11 @@ function Add-HarnessEventDetails {
         Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
         Start-Sleep -s 2
     } until (-not $flagsNeeded)
+    #Enable Google Auth for attendee access & Org level bits
     Enable-GoogleAuth
     Add-Organization
     Add-OrgSecrets
     Add-OrgTemplates
-
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
         if ($attendee.role -eq "OWNER") {
@@ -1186,6 +1196,7 @@ function Remove-HarnessEventDetails {
         Start-Sleep -s 2
 
     } until ($eventUsers.count -eq 0)
+    Clear-orgSecrets
     # This worked- remove cached details for event
     Set-Prefs -k "HarnessAccount"
     Set-Prefs -k "HarnessAccountId"
@@ -1573,89 +1584,129 @@ function Enable-GoogleAuth {
 }
 function Add-OrgSecrets {
     # Load all secrets from administration secret manager
-    # TODO: add support for json files. mostly this entails a good cry over the quality of Harness API before rallying to do it
     $orgSecrets = Send-Update -t 1 -c "Get secrets to install" -r "gcloud secrets list --filter='name ~ org*' --project=$($config.AdminProjectId) --format='value(NAME)'"
     foreach ($secret in $orgSecrets) {
         $secretValue = gcloud secrets versions access latest --secret=$secret
-        if ($secretValue.FIXTHIS) {
-            $ContentType = "application/json"
-            $secretID = $secret.substring(3)
-            $secretName = $secretID.replace("_"," ")
-            $templateheaders = @{
-                'x-api-key' = $($config.HarnessPAT)
-            }
-            $body = @{
-                secret = @{
-                    type          = "SecretText"
-                    name          = $secretName
-                    identifier    = $secretID
-                    orgIdentifier = $($config.HarnessOrg)
-                    spec          = @{
-                        errorMessageForInvalidYaml = "string"
-                        secretManagerIdentifier    = "org.harnessSecretManager"
-                        type                       = "SecretTextSpec1"
-                        valueType                  = "Inline"
-                        value                      = $secretValue
-                    }
-                }
-            } | Convertto-Json
-            $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
-            Try {
-                Send-Update -t 1 -c "Adding secret: $secretID"
-                Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
-            }
-            Catch {
-                $errorResponse = $_ | Convertfrom-Json
-                if ($errorResponse.message.contains("already exists")) {
-                    Send-Update -t 0 -c "Secret: $secretID already exists."
-                }
-                else {
-                    Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
-                    Send-Update -t 2 -c "Uri was: $uri"
-                    Send-Update -t 2 -c "Body was: $body"
-                    #exit
-                }   
-            }
+        $ContentType = "application/json"
+        $secretID = $secret.substring(3)
+        $secretName = $secretID.replace("_"," ")
+        $templateheaders = @{
+            'x-api-key' = $($config.HarnessPAT)
         }
-        else {
-            # Process Json File
-            $uri = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-            $spec = @{
-                secret = @{
-                    type          = 'SecretFile'
-                    name          = $secretName
-                    identifier    = $secretID
-                    orgIdentifier = $($config.HarnessOrg)
-                    spec          = @{
-                        secretManagerIdentifier = "org.harnessSecretManager"
-                    }
+        $body = @{
+            secret = @{
+                type          = "SecretText"
+                name          = $secretName
+                identifier    = $secretID
+                orgIdentifier = $($config.HarnessOrg)
+                spec          = @{
+                    errorMessageForInvalidYaml = "string"
+                    secretManagerIdentifier    = "org.harnessSecretManager"
+                    type                       = "SecretTextSpec1"
+                    valueType                  = "Inline"
+                    value                      = $secretValue
                 }
-            } | ConvertTo-Json
-
-            $multipartContent = [System.Net.Http.MultipartFormDataContent]::new()
-
-            $stringHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new("form-data")
-            $stringHeader.Name = "spec"
-            $StringContent = [System.Net.Http.StringContent]::new($spec)
-            $StringContent.Headers.ContentDisposition = $stringHeader
-            $multipartContent.Add($stringContent)
-            $multipartFile = 'worker1.json'
-            $FileStream = [System.IO.FileStream]::new($multipartFile, [System.IO.FileMode]::Open)
-            $fileHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new("form-data")
-            $fileHeader.Name = "file"
-            $fileHeader.FileName = 'worker1.json'
-            $fileContent = [System.Net.Http.StreamContent]::new($FileStream)
-            $fileContent.Headers.ContentDisposition = $fileHeader
-            $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("text/plain")
-            $multipartContent.Add($fileContent)
-            $templateheaders = @{
-                'x-api-key' = "pat.fjf_VfuITK2bBrMLg5xV7g.685eb2c56cbe10049b61e958.zBDRQLxrtoOtPkQE9qHy"
             }
-
-            Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
+        } | Convertto-Json
+        $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
+        Try {
+            Send-Update -t 1 -c "Adding secret: $secretID"
+            Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
         }
-
+        Catch {
+            $errorResponse = $_ | Convertfrom-Json
+            if ($errorResponse.message.contains("already exists")) {
+                Send-Update -t 0 -c "Secret: $secretID already exists."
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+                Send-Update -t 2 -c "Uri was: $uri"
+                Send-Update -t 2 -c "Body was: $body"
+                #exit
+            }   
+        }
     }
+}
+function Clear-OrgSecrets {
+    # Load all secrets from administration secret manager
+    $orgSecrets = Send-Update -t 1 -c "Get secrets to clear" -r "gcloud secrets list --filter='name ~ org*' --project=$($config.AdminProjectId) --format='value(NAME)'"
+    foreach ($secret in $orgSecrets) {
+        $secretValue = "123"
+        $ContentType = "application/json"
+        $secretID = $secret.substring(3)
+        $secretName = $secretID.replace("_"," ")
+        $templateheaders = @{
+            'x-api-key' = $($config.HarnessPAT)
+        }
+        $body = @{
+            secret = @{
+                type          = "SecretText"
+                name          = $secretName
+                identifier    = $secretID
+                orgIdentifier = $($config.HarnessOrg)
+                spec          = @{
+                    errorMessageForInvalidYaml = "string"
+                    secretManagerIdentifier    = "org.harnessSecretManager"
+                    type                       = "SecretTextSpec1"
+                    valueType                  = "Inline"
+                    value                      = $secretValue
+                }
+            }
+        } | Convertto-Json
+        $uri = "https://app.harness.io/ng/api/v2/secrets/$($secretID)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
+        # Try {
+        Send-Update -t 1 -c "Clearing secret: $secretID"
+        Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
+        # }
+        # Catch {
+        #     $errorResponse = $_ | Convertfrom-Json
+        #     if ($errorResponse.message.contains("already exists")) {
+        #         Send-Update -t 0 -c "Secret: $secretID already exists."
+        #     }
+        #     else {
+        #         Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+        #         Send-Update -t 2 -c "Uri was: $uri"
+        #         Send-Update -t 2 -c "Body was: $body"
+        #         #exit
+        #     }   
+        # }
+    }
+}
+function Add-SecretJson {
+    # Add Json Secret File
+    $uri = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $spec = @{
+        secret = @{
+            type          = 'SecretFile'
+            name          = $secretName
+            identifier    = $secretID
+            orgIdentifier = $($config.HarnessOrg)
+            spec          = @{
+                secretManagerIdentifier = "org.harnessSecretManager"
+            }
+        }
+    } | ConvertTo-Json
+
+    $multipartContent = [System.Net.Http.MultipartFormDataContent]::new()
+
+    $stringHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new("form-data")
+    $stringHeader.Name = "spec"
+    $StringContent = [System.Net.Http.StringContent]::new($spec)
+    $StringContent.Headers.ContentDisposition = $stringHeader
+    $multipartContent.Add($stringContent)
+    $multipartFile = 'worker1.json'
+    $FileStream = [System.IO.FileStream]::new($multipartFile, [System.IO.FileMode]::Open)
+    $fileHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new("form-data")
+    $fileHeader.Name = "file"
+    $fileHeader.FileName = 'worker1.json'
+    $fileContent = [System.Net.Http.StreamContent]::new($FileStream)
+    $fileContent.Headers.ContentDisposition = $fileHeader
+    $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("text/plain")
+    $multipartContent.Add($fileContent)
+    $templateheaders = @{
+        'x-api-key' = "pat.fjf_VfuITK2bBrMLg5xV7g.685eb2c56cbe10049b61e958.zBDRQLxrtoOtPkQE9qHy"
+    }
+    Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
 }
 function Add-OrgTemplates {
     $OrgTemplates = gcloud storage ls gs://harnesseventsdata/OrgTemplates/*.yaml
@@ -1909,9 +1960,10 @@ function New-GCP-Project {
         Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
         Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         # Enable API's needed for workshops
-        $projectAPIs = @("compute.googleapis.com","container.googleapis.com")
-        Send-Update -t 1 -o -c "Enabling compute API" -r "gcloud services enable compute.googleapis.com"
-        Send-Update -t 1 -o -c "Enabling kubernetes API" -r "gcloud services enable container.googleapis.com"
+        $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
+        Foreach ($api in $projectApis) {
+            send-Update -t 1 -o -c "Enabling compute API" -r "gcloud services $api"
+        }
         # Wait for confirmation that API's are enabled
         $counter = 0
         Do {
