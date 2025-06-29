@@ -681,6 +681,7 @@ function Remove-Event {
 }
 function Get-ClassroomStatus {
     $gcpStatus = Get-DelegateStatus -d gcp
+    #GCP Status
     if ($gcpStatus) {
         Set-Prefs -k "GCPDelegateId" -v $gcpStatus.name
         Add-Choice -k "GCPCONFIG" -d "Delete GCP classroom" -c $config.GoogleProject -f Remove-GCP-Project
@@ -688,6 +689,7 @@ function Get-ClassroomStatus {
     else {
         Add-Choice -k "GCPCONFIG" -d "Enable GCP classrom" -c "not enabled" -f New-GCP-Project
     }
+    # TODO enable other clouds
     Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
@@ -1572,7 +1574,7 @@ function Enable-GoogleAuth {
 function Add-OrgSecrets {
     # Load all secrets from administration secret manager
     # TODO: add support for json files. mostly this entails a good cry over the quality of Harness API before rallying to do it
-    $orgSecrets = gcloud secrets list --filter="name ~ org*" --format="value(NAME)" 
+    $orgSecrets = Send-Update -t 1 -c "Get secrets to install" -r "gcloud secrets list --filter='name ~ org*' --project=$($config.AdminProjectId) --format='value(NAME)'"
     foreach ($secret in $orgSecrets) {
         $secretValue = gcloud secrets versions access latest --secret=$secret
         if ($secretValue.FIXTHIS) {
@@ -1747,7 +1749,7 @@ function Get-DelegateConfig {
     )
     $uri = "https://app.harness.io/ng/api/download-delegates/kubernetes?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
-        "name" = "$delegatePrefix-$($config.GoogleEventName)-delegate"
+        "name" = "$delegatePrefix-delegate"
     } | ConvertTo-Json
     $response = Invoke-RestMethod -Method 'POST' -ContentType 'application/json' -uri $uri -Headers $HarnessHeaders -body $body
     $response | Out-File -FilePath "$delegatePrefix.yaml" -Force
@@ -1764,7 +1766,7 @@ function Get-DelegateStatus {
     $body = @{
         "status"       = "CONNECTED"
         "filterType"   = "Delegate"
-        "delegateName" = "$delegatePrefix-$($config.GoogleEventName)-delegate"
+        "delegateName" = "$delegatePrefix-delegate"
     } | Convertto-Json
     $response = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType 'application/json'
     if ($response.resource) {
@@ -1779,13 +1781,19 @@ function Add-Delegate {
         [string]
         $delegatePrefix #expecting gcp/az/aws
     )
-    Send-Update -t 1 -c "Get $delegatePrefix Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
-    Send-Update -t 1 -c "Apply $delegatePrefix delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
         "status"     = "CONNECTED"
         "filterType" = "Delegate"
     } | Convertto-Json
+    #Check if there was an existing delegate- delete if so to reduce confusion
+    # TODO possible? will delegate delete if it was associated to anything
+    $pretestDelegate = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType "application/json"
+    if ($pretestDelegate) {
+        Remove-Delegate -delegatePrefix gcp
+    }
+    Send-Update -t 1 -c "Get $delegatePrefix Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
+    Send-Update -t 1 -c "Apply $delegatePrefix delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
     $counter = 0
     While (-not $DelegateAvailable) {
         Send-Update -t 1 -c "Waiting for delegate to be available..."
@@ -1859,7 +1867,9 @@ function Update-FeatureFlag {
 
 # Classroom Functions
 function New-GCP-Project {
-    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
+    #if ($config.GoogleProject) {
+    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json --verbosity=error" | convertfrom-json
+    #}
     if ($projectCheck.projectId) {
         # Project already exists- skip creation
         Send-Update -t 1 -c "Project already exists- skipping creation."
@@ -1882,60 +1892,74 @@ function New-GCP-Project {
         }
         $projectID = "event-$(Get-Randomstring)"
         $projectID = $projectID.tolower()
-        Send-Update -t 1 -c "Create $GoogleProject project" -r "gcloud projects create $projectID --name=""$GoogleProject"" --organization=$GoogleOrgId --set-as-default -q"
-    
+        Send-Update -t 1 -o -c "Create $GoogleProject project" -r "gcloud projects create $projectID --name=""$GoogleProject"" --organization=$GoogleOrgId --set-as-default -q"
         while (-not $projectDetails) {
             $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
             Start-Sleep -s 6
         }
         # Associate project with billing account
-        Send-Update -t 1 -c "Associate billing account" -r "gcloud billing projects link $projectID --billing-account=$GoogleBillingProject"
+        Send-Update -t 1 -o -c "Associate billing account" -r "gcloud billing projects link $projectID --billing-account=$GoogleBillingProject"
         Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
         Set-Prefs -k "GoogleProject" -v $GoogleProject
         # Add users to project
-        Send-Update -t 1 -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
-        Send-Update -t 1 -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
+        Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
+        Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
         # Create worker, get keys, add to IAM
-        Send-Update -t 1 -c "Create service account" -r "gcloud iam service-accounts create worker1"
-        Send-Update -t 1 -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
-        Send-Update -t 1 -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
+        Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
+        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
+        Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         # Enable API's needed for workshops
+        $projectAPIs = @("compute.googleapis.com","container.googleapis.com")
         Send-Update -t 1 -o -c "Enabling compute API" -r "gcloud services enable compute.googleapis.com"
         Send-Update -t 1 -o -c "Enabling kubernetes API" -r "gcloud services enable container.googleapis.com"
+        # Wait for confirmation that API's are enabled
+        $counter = 0
+        Do {
+            $counter++
+            if ($counter -ge 10) {
+                Send-Update -t 2 -c "It took too long enabling needed API's"
+            }
+            $enabledAPIs = gcloud services list --format=json | Convertfrom-Json
+            $neededAPIs = Compare-Object $projectAPIs $enabledAPIs.config.name | Where-Object { $_.SideIndicator -eq "<=" }
+            Start-Sleep -s 2
+        } until (-not $neededAPis)
     }
     New-GCPcluster
 }
 function Remove-GCP-Project {
     # Delete project if it exists
     if ($config.GoogleProjectId) {
-        Send-Update -t 1 -c "Removing Google Project" -r "gcloud projects delete $($config.GoogleProjectId) --quiet"
+        Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $($config.GoogleProjectId) --quiet"
         $Counter = 0
         Do {
             $counter++
             if ($counter -ge 10) {
                 Send-Update -t 2 -c "Wow, something went terrrrrrribly wrong trying to remove Google Project: $($config.GoogleProjectId)"
+                exit
             }
             $projectCheck = Send-Update -t 1 -c "Waiting for project delete confirmation..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
-            Start-Sleep -s 2
+            Start-Sleep -s 5
         } while ($projectCheck)
         Send-Update -t 1 -c "Google Project successfully removed"
         Set-Prefs -k "GoogleProjectId"
         Set-Prefs -k "GoogleProject"
-    } 
-    Send-Update -t 2 -c "Tried removing Google Project- but no Google Project ID found in config"
+    }
+    else {
+        Send-Update -t 2 -c "Tried removing Google Project- but no Google Project ID found in config"
+    }
     Get-ClassroomStatus
 }
 function New-GCPcluster {
     # Check if kubernetes cluster exists
     $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter='name=harnessevent' --format=json " | Convertfrom-Json
     if (-not $clusterExists) {
-        $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)'"
+        $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)' --verbosity=error"
         Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes cloud-platform"
         Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=$clusterRegion"  
     }
     $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter='name=harnessevent' --format=json " | Convertfrom-Json
     if (-not $clusterExists) {
-        Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHY GOOGLE?"
+        Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHYYYYYY GOOGLE?"
         exit
     }
     else {
