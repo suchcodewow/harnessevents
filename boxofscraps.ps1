@@ -359,7 +359,7 @@ function Set-Prefs {
 function Get-Choice() {
     # Present list of options and get selection
     write-output $choices | sort-object -property Option | format-table $choiceColumns | Out-Host
-    $cmd_selected = read-host -prompt "Which option to execute? [<enter> to quit]"
+    $cmd_selected = read-host -prompt "Which option? [<enter> to quit]"
     if (-not($cmd_selected)) {
 
         write-host "buh bye!`r`n" | Out-Host
@@ -541,18 +541,15 @@ function Add-EventUsers {
 }
 function Get-Events {
     # Check token status/refresh
-    Get-GoogleAccessTokenV2
+    Get-GoogleAccessToken
     # Create an instructor email account if needed
     if (!(Get-User -u $config.InstructorEmail)) {
         New-User -u $config.InstructorEmail
         Send-Update -t 1 -c "Generated your instructor email: $($config.InstructorEmail)"  
     }
-    else {
-        #Send-Update -t 1 -c "Your existing instructor email is: $($config.InstructorEmail)"
-    }
-    # Create/Clear event list
+    # Clear event list
     $eventList.Clear()
-    # Get groups for current user
+    # Get groups where current email is an instructor
     $currentGroups = Get-UserGroups -u $($config.InstructorEmail)
     foreach ($group in $currentGroups) {
         # Filter to event groups only
@@ -706,10 +703,20 @@ function Get-ClassroomStatus {
 
 # Google Login Functions
 function Get-GoogleLogin {
+    # Use @harness.io email if already logged in
     $myGoogleAccount = Send-Update -t 1 -c "Retrieving local accounts" -r "gcloud auth list --filter=account:'harness.io' --format='value(account)'"
     if ($myGoogleAccount.count -eq 1) {
-        Send-Update -t 1 -c "Using current account" -r "gcloud config set account $myGoogleAccount  --no-user-output-enabled"
+        Send-Update -t 0 -c "Using current account" -r "gcloud config set account $myGoogleAccount  --no-user-output-enabled"
         $currentUser = $myGoogleAccount
+    }
+    else {
+        # Allow @harnessevents.io email for testing- but provide warning this isn't normal for "production"
+        $testGoogleAccount = Send-Update -t 0 -c "Didn't find @harness.io email, trying @harnessevents.io" -r "gcloud auth list --filter=account:'harnessevents.io' --format='value(account)'"
+        if ($testGoogleAccount.count -eq 1) {
+            Send-Update -t 0 -o -c "Using $testGoogleAccount.  Just FYI:Event email should only be used when testing" -r "gcloud config set account $testGoogleAccount"
+            Send-Update -t 2 -c "Used event email $testGoogleAccount.  This should only be done when testing- not in real events."
+            $currentUser = $testGoogleAccount
+        }
     }
     Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin" -t
     if ($currentUser) {
@@ -739,80 +746,6 @@ function Set-GoogleLogin {
     }
 }
 function Get-GoogleAccessToken {
-    # Check for valid token
-    if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
-        # Check if token is over 50m old
-        $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
-        if ($TimeDiff.TotalMinutes -lt 50) {
-            Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
-            $script:headers = @{
-                "Authorization" = "Bearer $($config.GoogleAccessToken)"
-            }
-            return
-        }
-        else {
-            Send-Update -t 1 -c "Google Workspace Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
-        }
-    }
-    else {
-        Send-Update -t 1 -c "Token or timestemp missing."
-    }
-    # Refresh token
-    Send-Update -t 1 -c "Refreshing token."
-    Get-AccessKeys
-    $Scope = "https://www.googleapis.com/auth/admin.directory.user https://www.googleapis.com/auth/admin.directory.group"
-    $accessToken = $null
-    # arbitrary port number to listen on
-    $port = 12005
-    # client identifier of your application configured in the Google Console
-    $clientId = $($config.tom1)
-    # client secret of your application configured in the Google Console
-    $clientSecret = $($config.jerry1)
-    # URL used to obtain start an OAuth authorization flow
-    $url = "https://accounts.google.com/o/oauth2/v2/auth?client_id=$clientId&redirect_uri=http://localhost:$port&response_type=code&scope=$Scope&setLoginHint=$($config.GoogleUser)"
-    # Kick off the default web browser
-    Start-Process $url
-    # Spin up our .NET Core 3.0 application hostig the web server
-    #$authorizationCode = & dotnet run -p .\OAuthListener -- $port
-    $listener = New-Object System.Net.HttpListener
-    $listener.Prefixes.Add("http://localhost:$port/")
-    $listener.Start()
-    Send-Update -t 1 -c "Setup listener on port $port"
-
-    #Wait for listener to catch a response
-    $context = $listener.getContext()
-    $authorizationCode = $context.Request.QueryString["code"]
-
-    #Write out response to user
-    $webPageResponse = "<html><body><div>Safe to close window </div></body></html>"
-    $webPageResponseEncoded = [System.Text.Encoding]::UTF8.GetBytes($webPageResponse)
-    $webPageResponseLength = $webPageResponseEncoded.Length
-    $response = $context.response
-    $response.ContentLength64 = $webPageResponseLength
-    $response.ContentType = "text/html; charset=UTF-8"
-    $response.OutputStream.Write($webPageResponseEncoded, 0, $webPageResponseLength)
-    $response.OutputStream.Close()
-
-    # if an authorization code was written to stdout then
-    # exchange it for an access token, otherwise output an error
-    if ($authorizationCode) {
-        $authorizationResponse = Invoke-RestMethod -Uri "https://www.googleapis.com/oauth2/v4/token?code=$authorizationCode&client_id=$clientId&client_secret=$clientSecret&redirect_uri=http://localhost:$port&grant_type=authorization_code" -Method Post
-        $accessToken = $authorizationResponse.access_token
-        $currentUser = gcloud auth list --filter=status:ACTIVE --format="value(account)"
-        Set-Prefs -k "GoogleAccessToken" -v $accessToken
-        Set-Prefs -k "GoogleAccessTokenTimestamp" -v $(Get-date)
-        Set-Prefs -k "GoogleUser" -v $currentUser
-        $script:headers = @{
-            "Authorization" = "Bearer $($config.GoogleAccessToken)"
-        }
-        Send-Update -t 1 -c "Successfully retrieved a new token and timestamp."
-
-    }
-    else {
-        Send-Update -t 2 -c "Unexpected error while retrieving access token."
-    }
-}
-function Get-GoogleAccessTokenV2 {
     # Check for valid token
     if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
         # Check if token is over 50m old
@@ -858,6 +791,7 @@ function Get-GoogleAccessTokenV2 {
         # Save the name of the google account to use later
         $googleServiceAccount = gcloud auth list --filter=status:ACTIVE --format='value(account)'
         Set-Prefs -k "GoogleServiceAccount" -v $googleServiceAccount
+        # Write out auth headers that can be used anywhere
         $script:headers = @{
             "Authorization" = "Bearer $($config.GoogleAccessToken)"
         }
@@ -869,28 +803,6 @@ function Get-GoogleAccessTokenV2 {
     }
     Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
-}
-function Get-AccessKeys {
-    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
-    if ($project.count -ne 1) {
-        Send-Update -t 2 -c "Failed to find admin project. Might need to login (gcloud auth login)"
-        exit
-    }
-    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
-    gcloud config set project $($config.AdminProjectId)
-    $tom1 = gcloud secrets versions access latest --secret="tom1" --project=$($config.AdminProjectId)
-    if (!$tom1) {
-        Send-Update -t 2 -c "tom1 not found."
-        exit
-    }
-    Set-Prefs -k "tom1" -v $tom1
-    $jerry1 = gcloud secrets versions access latest --secret="jerry1" --project=$($config.AdminProjectId)
-    if (!$jerry1) {
-        Send-Update -t 2 -c "jerry1 not found."
-        exit
-    }
-    Set-Prefs -k "jerry1" -v $jerry1
-    Send-Update -t 1 -c "Projects and administration access loaded successfully"
 }
 
 # Google Workspace Functions
@@ -1221,7 +1133,12 @@ function Set-HarnessConfiguration {
     while (-not $goodToken) {
         #Show list of cached tokens
         $config.HarnessList | Format-Table -Property option, HarnessAccount, HarnessAccountId
-        $accountChoice = Read-Host "Select cached token or 'a' to add new token"
+        if (-not $config.HarnessList) {
+            $accountChoice = "a"
+        }
+        else {
+            $accountChoice = Read-Host "Select cached token or 'a' to add new token"
+        }
         if ($accountChoice.tolower() -eq "a") {
             # Offer option to add new token
             $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token or <enter> to abort"
@@ -1610,7 +1527,7 @@ function Add-OrgSecrets {
         } | Convertto-Json
         $uri = "https://app.harness.io/ng/api/v2/secrets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
         Try {
-            Send-Update -t 1 -c "Adding secret: $secretID"
+            Send-Update -t 1 -c "Adding/Updating secret: $secretID"
             Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
         }
         Catch {
@@ -1767,7 +1684,7 @@ function Add-OrgTemplates {
             'x-api-key' = $config.HarnessPAT
         }
         Try {
-            Send-Update -t 1 -c "Adding org $($templateType): $templateId"
+            Send-Update -t 1 -c "Adding/Updating org $($templateType): $templateId"
             Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType | Out-null
         }
         Catch {
