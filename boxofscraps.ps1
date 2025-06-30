@@ -701,7 +701,7 @@ function Get-ClassroomStatus {
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
 
-# Google Login Functions
+# Google Event Functions
 function Get-GoogleLogin {
     # Use @harness.io email if already logged in
     $myGoogleAccount = Send-Update -t 1 -c "Retrieving local accounts" -r "gcloud auth list --filter=account:'harness.io' --format='value(account)'"
@@ -804,8 +804,6 @@ function Get-GoogleAccessToken {
     Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
 }
-
-# Google Workspace Functions
 function Add-UserToGroup {
     param (
         [Parameter(Mandatory = $true)]
