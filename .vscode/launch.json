@@ -5,11 +5,18 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "PowerShell: Launch Current File",
+      "name": "Verbose",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
       "args": ["-v"]
+    },
+    {
+      "name": "Normal",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": []
     }
   ]
 }
