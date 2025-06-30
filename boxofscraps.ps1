@@ -1815,7 +1815,7 @@ function Update-FeatureFlag {
     return $response
 }
 
-# Google Project Functions
+# Classroom Functions
 function New-GCPProject {
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
@@ -1871,14 +1871,12 @@ function Remove-GCPProject {
 
     Get-ClassroomStatus
 }
-
-##TODO Azure Resource Group Functions
 function New-AZResourceGroup {
+    ##TODO Azure Resource Group Functions
     Send-Update -t 1 -c "Sorry, this is not built yet!"
 }
-
-##TODO AWS Project Functions
 function New-AWSProject {
+    ##TODO AWS Project Functions
     Send-Update -t 1 -c "Sorry, this is not built yet!"
 }
 
