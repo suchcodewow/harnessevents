@@ -424,8 +424,16 @@ function Get-Randomstring {
 }
 
 # Google Functions
-Get-ProjectList {
+function Get-ProjectList {
+    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+    if ($project.count -ne 1) {
+        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
+        exit
+    }
+    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
+    Set-Prefs -k "AdminProjectNumber" -v $($project.projectNumber)
     
 }
 # Main
 Get-Prefs($Myinvocation.MyCommand.Source)
+Get-ProjectList
