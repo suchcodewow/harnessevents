@@ -425,15 +425,32 @@ function Get-Randomstring {
 
 # Google Functions
 function Get-ProjectList {
-    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
-    if ($project.count -ne 1) {
-        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
-        exit
-    }
+    # Retrieve all projects except administration
+    $projects = gcloud projects list --filter='-name:administration' --format=json | Convertfrom-Json
     Set-Prefs -k "AdminProjectId" -v $($project.projectId)
     Set-Prefs -k "AdminProjectNumber" -v $($project.projectNumber)
-    
+    return $projects
 }
+
+function Get-EventJson {
+    $events = gcloud storage cat gs://harnesseventsdata/config/allevents.json | Convertfrom-Json
+    if ($events) {
+        return $events
+    }
+    else {
+        return [PSCustomObject]@{}
+    }
+}
+
+function Save-EventJson {
+
+}
+
 # Main
+gcloud auth activate-service-account --key-file=account.json
 Get-Prefs($Myinvocation.MyCommand.Source)
-Get-ProjectList
+$allProjects = Get-ProjectList
+Send-Update -t 1 -c "$($allProjects.count) total projects to check."
+$allEvents = Get-EventJson
+Send-Update -t 1 -c "$($allEvents.count) events loaded."
+$allEvents.GetType()

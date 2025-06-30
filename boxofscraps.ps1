@@ -1834,7 +1834,7 @@ function Update-FeatureFlag {
 }
 
 # Classroom Functions
-function New-GCPProject {
+function New-GCP-Project {
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
     # Get organization of admin project to assign to new project
@@ -1843,8 +1843,6 @@ function New-GCPProject {
     # Get billing project of admin project to associate with this project
     $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
     Set-Prefs -k "GoogleBillingProject" -v $AdminProjectInfo.name.split("/")[1]
-    # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
-    Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
     # Create new google project if needed
     $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
     if ($projectCheck) {
@@ -1858,7 +1856,7 @@ function New-GCPProject {
         }
         $projectID = "event-$(Get-Randomstring)"
         $projectID = $projectID.tolower()
-        Send-Update -t 1 -o -c "Create $GoogleProject project" -r "gcloud projects create $projectID --name=""$GoogleProject"" --organization=$GoogleOrgId --set-as-default -q"
+        Send-Update -t 1 -o -c "Create $($config.GoogleProject) project" -r "gcloud projects create $projectID --name=""$($config.GoogleProject)"" --organization=$GoogleOrgId --set-as-default -q"
         while (-not $projectDetails) {
             $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
             Start-Sleep -s 6
@@ -1877,7 +1875,7 @@ function New-GCPProject {
         # Enable API's needed for workshops
         $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
         Foreach ($api in $projectApis) {
-            send-Update -t 1 -o -c "Enabling compute API" -r "gcloud services $api"
+            send-Update -t 1 -o -c "Enabling $api API" -r "gcloud services enable $api"
         }
         # Wait for confirmation that API's are enabled
         $counter = 0
@@ -1891,7 +1889,7 @@ function New-GCPProject {
             Start-Sleep -s 2
         } until (-not $neededAPis)
     }
-    New-GCPcluster
+    New-GCP-Cluster
 }
 function Remove-GCP-Project {
     # Delete project if it exists
@@ -1916,7 +1914,7 @@ function Remove-GCP-Project {
     }
     Get-ClassroomStatus
 }
-function New-GCPcluster {
+function New-GCP-Cluster {
     # Check if kubernetes cluster exists
     $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter='name=harnessevent' --format=json " | Convertfrom-Json
     if (-not $clusterExists) {
