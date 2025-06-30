@@ -11,6 +11,7 @@ param (
     [switch] $gcp, # use gcp
     [switch] $multiUserMode #Switch to classroom setup for x users
 )
+
 # Core Functions
 function Get-UserName {
     # Generate a new username
@@ -425,15 +426,16 @@ function Get-Randomstring {
 
 # Google Functions
 function Get-ProjectList {
-    # Retrieve all projects except administration
-    $projects = gcloud projects list --filter='-name:administration' --format=json | Convertfrom-Json
-    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
-    Set-Prefs -k "AdminProjectNumber" -v $($project.projectNumber)
+    # Retrieve administration organization
+    $adminOrg = gcloud organizations list --filter='display_name:harnessevents.io' --format=json | Convertfrom-Json
+    $adminOrgId = $adminOrg.name.split("/")[1]
+    Set-Prefs -k "AdminOrgId" -v $adminOrgId
+    # Retrieve all child projects except administration
+    $projects = Send-Update -t 1 -c "Retrieving projects" -r "gcloud projects list --filter='parent.id:$($config.AdminOrgId) AND -name:administration' --format=json" | Convertfrom-Json
     return $projects
 }
-
 function Get-EventJson {
-    $events = gcloud storage cat gs://harnesseventsdata/config/allevents.json | Convertfrom-Json
+    $events = gcloud storage cp gs://harnesseventsdata/config/janitor.ps1.conf | Convertfrom-Json
     if ($events) {
         return $events
     }
@@ -441,16 +443,33 @@ function Get-EventJson {
         return [PSCustomObject]@{}
     }
 }
-
 function Save-EventJson {
 
 }
 
-# Main
-gcloud auth activate-service-account --key-file=account.json
+# State Functions
+function Get-State {
+    gcloud auth activate-service-account --key-file=account.json
+    gcloud storage cp gs://harnesseventsdata/config/janitor.ps1.conf .
+
+}
+function Save-State {
+    Set-Prefs -k "EndTime" -v $(Get-Date -asUTC)
+    gcloud storage cp janitor.ps1.conf gs://harnesseventsdata/config/
+    gcloud storage cp janitor.ps1.log gs://harnesseventsdata/config/
+}
+
+# Pre-flight
+Get-State
 Get-Prefs($Myinvocation.MyCommand.Source)
-$allProjects = Get-ProjectList
+Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
+
+# Main
 Send-Update -t 1 -c "$($allProjects.count) total projects to check."
-$allEvents = Get-EventJson
-Send-Update -t 1 -c "$($allEvents.count) events loaded."
-$allEvents.GetType()
+$projects = Get-ProjectList
+
+
+Set-Prefs -k "PreviousList" -v $config.CurrentList
+Set-Prefs -k "CurrentList" -v $projects
+# Post-flight
+Save-State
