@@ -513,7 +513,7 @@ function Add-EventUsers {
     $usersToAdd = $preset
     # Ask how many users are needed
     while (-not $usersToAdd) {
-        $userCount = read-host -prompt "How many users to add to $($config.GoogleEventName)-include yourself and other instructors? <enter> to abort"
+        $userCount = read-host -prompt "How many users to add to $($config.GoogleEventName) include yourself and other instructors? <enter> to abort"
         if (-not($userCount)) {
             return
         }
