@@ -447,7 +447,7 @@ function Save-EventJson {
 
 }
 
-# State Functions
+# Script Functions
 function Get-State {
     gcloud auth activate-service-account --key-file=account.json
     gcloud storage cp gs://harnesseventsdata/config/janitor.ps1.conf .
@@ -458,18 +458,44 @@ function Save-State {
     gcloud storage cp janitor.ps1.conf gs://harnesseventsdata/config/
     gcloud storage cp janitor.ps1.log gs://harnesseventsdata/config/
 }
+function Set-Error {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $errormsg
+    )
+    Send-Update -t 2 -c $errormsg
+    $issuesList += $errormsg + "`n"
+}
 
 # Pre-flight
-Get-State
+#Get-State
 Get-Prefs($Myinvocation.MyCommand.Source)
 Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
 # Main
-Send-Update -t 1 -c "$($allProjects.count) total projects to check."
 $projects = Get-ProjectList
+Send-Update -t 1 -c "$($projects.count) total projects to check."
+Send-Update -t 1 -c "Projects to Review:`n$($projects.name)"
+#Create list of issues to email if problems pop up.
+$script:issuesList = $false
+foreach ($project in $projects) {
+    Send-Update -t 1 -c "Reviewing project $($project.name)"
+    $issueStart = "Google Project: $($project.name) [$project.projectId] "
+    if ($project.name.substring(0,6) -ne "event-") {
+        Set-Error -errormsg "$issueStart doesn't follow naming convention 'event-'."
+        return
+    }
+    $clusterExists = Send-Update -t 1 -c "Check $($project.projectId) for kubernetes cluster" -r "gcloud container clusters list --project=$($project.projectId) --format=json " | Convertfrom-Json
+    if ($clusterExists.count -ge 2) {
+        Send-Update -t 2 -c "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+        $issuesList += "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+    }
+}
 
 
-Set-Prefs -k "PreviousList" -v $config.CurrentList
-Set-Prefs -k "CurrentList" -v $projects
+#Set-Prefs -k "PreviousList" -v $config.CurrentList
+#Set-Prefs -k "CurrentList" -v $projects
 # Post-flight
-Save-State
+#Save-State
