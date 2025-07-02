@@ -2011,3 +2011,14 @@ while ($choices.count -gt 0) {
     }
     else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
 }
+
+# Get-GoogleLogin
+# Set-GoogleLogin
+# Get-Events
+# Set-Event
+# Get-HarnessConfiguration
+# Set-HarnessConfiguration -> Save-HarnessConfig
+# projects created yes -> Get-ClassroomStatus
+# projects created no and "preset users" -> Add-Eventusers
+# Add-HarnessEventDetails
+# Get-ClassroomStatus
