@@ -574,6 +574,12 @@ function Set-EventUsers {
     Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Get-Events {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [switch]
+        $preset
+    )
     # Check token status/refresh
     Get-GoogleAccessToken
     # Create an instructor email account if needed
@@ -601,20 +607,20 @@ function Get-Events {
     # Always provide option to change events
     #Add-Choice -k "EVENT" -d "Create/Switch/Join Event" -c $($config.GoogleEventName) -f "Set-Event" -todo
     #Add-Choice -k "RESETPW" -d "Reset instructor email" -c $config.InstructorEmail -f "Reset-Password"
-    $eventDefault = $eventList | Where-Object default -eq $true
-    if ($eventDefault.count -eq 1) {
-        #Send-Update -t 0 -c "Setting event with default:  $eventDefault"
-        #Set-Event -p $eventDefault
-        Set-Prefs -k "GoogleEventName" -v $eventSelected.name
-        Set-Prefs -k "GoogleEventId" -v $eventSelected.id
-        Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
-    }
-    else {
-        #Set-Event
-        Set-Prefs -k "GoogleEventName"
-        Set-Prefs -k "GoogleEventId"
-        Set-Prefs -k "GoogleEventEmail"
-    }
+    # $eventDefault = $eventList | Where-Object default -eq $true
+    # if ($eventDefault.count -eq 1 -and $preset) {
+    #     #Send-Update -t 0 -c "Setting event with default:  $eventDefault"
+    #     #Set-Event -p $eventDefault
+    #     Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+    #     Set-Prefs -k "GoogleEventId" -v $eventSelected.id
+    #     Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
+    # }
+    # else {
+    #     #Set-Event
+    #     Set-Prefs -k "GoogleEventName"
+    #     Set-Prefs -k "GoogleEventId"
+    #     Set-Prefs -k "GoogleEventEmail"
+    # }
 }
 function Set-Event {
     # param(
@@ -622,6 +628,7 @@ function Set-Event {
     # )
     # $eventSelected = $preset
     #Prompt for event option
+    Get-Events
     while (-not $eventSelected) {
         write-output $eventList | sort-object -property Option | format-table $eventColumns | Out-Host
         $newEvent = read-host -prompt "Select existing or create new event? <enter> to abort"
@@ -2034,9 +2041,9 @@ Get-Prefs($Myinvocation.MyCommand.Source)
 Get-GoogleLogin
 
 while ($true) {
-    Get-Events
+    #Get-Events -preset
     # Offer Options to configure event
-    Add-Choice -k "EVENT" -d "Create/Switch Event" -c $config.GoogleEventName -f "Get-Events" -todo
+    Add-Choice -k "EVENT" -d "Create/Switch Event" -c $config.GoogleEventName -f "Set-Event" -todo
     Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $config.HarnessAccount -f "Set-HarnessConfiguration" -t
     Add-Choice -k "GCPCONFIG" -d "Enable/Disable GCP classroom" -c $config.UseGoogleClassroom -f "Set-GCP-Project"
     Add-Choice -k "AZURECONFIG" -d "Enable/Disable GCP classroom" -c $config.UseAwsClassroom -f "Set-Azure-Project"
