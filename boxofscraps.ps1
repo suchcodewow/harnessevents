@@ -370,7 +370,11 @@ function Get-Choice() {
         exit
     }
     if ($cmd_selected -eq 0) { Get-Quote }
-    return $choices | Where-Object { $_.Option -eq $cmd_selected } | Select-Object -first 1 
+    $cmd = $choices | Where-Object { $_.Option -eq $cmd_selected } | Select-Object -first 1
+    if ($cmd) {
+        Invoke-Expression $cmd.callFunction
+    }
+    else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
 }
 function Add-Choice() {
     #Add a choice to main menu for user selection
@@ -439,21 +443,21 @@ function New-Event {
         if (-not($newEvent)) {
             return
         }
-        while (-not $usersToAdd) {
-            $userCount = read-host -prompt "How many users to add now (including instructors)? <enter> for 0"
-            if (-not($userCount)) {
-                break
-            }
-            if ($userCount -match '^[0-9]+$') {
-                $usersToAdd = $userCount
-            }
-            else {
-                Send-Update -t 2 -c "Whoa bud, howbow a number there for quantity of user?"
-            }
-        }
-        Set-Prefs -k "presetUsers" -v $usersToAdd
-        $newToken = read-host -prompt "Harness Account admin token to use <enter> to add later"
-        Set-Prefs -k "presetToken" -v $newToken
+        # while (-not $usersToAdd) {
+        #     $userCount = read-host -prompt "How many users to add now (including instructors)? <enter> for 0"
+        #     if (-not($userCount)) {
+        #         break
+        #     }
+        #     if ($userCount -match '^[0-9]+$') {
+        #         $usersToAdd = $userCount
+        #     }
+        #     else {
+        #         Send-Update -t 2 -c "Whoa bud, howbow a number there for quantity of user?"
+        #     }
+        # }
+        #Set-Prefs -k "presetUsers" -v $usersToAdd
+        #$newToken = read-host -prompt "Harness Account admin token to use <enter> to add later"
+        #Set-Prefs -k "presetToken" -v $newToken
         $eventName = $newEvent -replace '\W', ''
         $eventName = "event-" + $eventName.tolower()
         $newEmail = $eventName + "@harnessevents.io"
@@ -485,6 +489,9 @@ function New-Event {
             Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
         }
     }
+    Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+    Set-Prefs -k "GoogleEventId" -v $eventSelected.id
+    Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
     Get-Events
 }
 function Add-Event {
@@ -504,34 +511,18 @@ function Add-Event {
     [void]$eventList.add($eventItem)
 }
 function Add-EventUsers {
-    [CmdletBinding()]
-    param (
-        [Parameter()]
-        [Int16]
-        $preset
-    )
-    $usersToAdd = $preset
-    # Ask how many users are needed
-    while (-not $usersToAdd) {
-        $userCount = read-host -prompt "How many users to add to $($config.GoogleEventName) include yourself and other instructors? <enter> to abort"
-        if (-not($userCount)) {
-            return
-        }
-        if ($userCount -match '^[0-9]+$') {
-            $usersToAdd = $userCount
-        }
-        else {
-            Send-Update -t 2 -c "Whoa bud, howbow a number there for quantity of user?"
-        }
+    if (-not $config.UserEventCount) {
+        Send-Update -t 1 -c "User count not entered- skipping adding users."
+        return
     }
     $counter = 1
     Get-GoogleAccessToken
     # Get current total
     $startingCount = (Get-GroupMembers -s).memberCount
-    $totalCount = $startingCount + $userCount
-    Send-Update -t 1 -c "Group has $startingCount now with goal of $totalCount"
+    $usersNeeded = $config.UserEventCount - $startingCount
+    Send-Update -t 1 -c "Group has $startingCount now with goal of $($config.UserEventCount)"
     # Loop to add users
-    while ($counter -le $userCount) {
+    while ($counter -le $usersNeeded) {
         $newUser = $false
         While (-not $newUser) {
             $user = Get-UserName
@@ -552,9 +543,9 @@ function Add-EventUsers {
     Set-Prefs -k "projectsCreated"
     Send-Update -t 1 -c "Waiting for all users to be available..."
     $memberCounter = 0
-    While ($memberCount -lt $totalCount) {
+    While ($memberCount -lt $($config.UserEventCount)) {
         $memberCount = (Get-GroupMembers -s).memberCount
-        Send-Update -t 1 -c "$memberCount of $totalCount"
+        Send-Update -t 1 -c "$memberCount of $($config.UserEventCount)"
         Start-Sleep -s 4
         $memberCounter++
         if ($memberCounter -gt 20) {
@@ -563,9 +554,24 @@ function Add-EventUsers {
         }
     }
     Send-Update -t 1 -c "All users added successfully"
-    if (-not $preset) {
-        Get-Events
+    # if (-not $preset) {
+    #     Get-Events
+    # }
+}
+function Set-EventUsers {
+    while (-not $usersToAdd) {
+        $userCount = read-host -prompt "How many attendees will $($config.GoogleEventName) have include yourself and other instructors? <enter> to abort"
+        if (-not($userCount)) {
+            return
+        }
+        if ($userCount -match '^[0-9]+$') {
+            $usersToAdd = $userCount
+        }
+        else {
+            Send-Update -t 2 -c "Whoa bud, howbow a number there for quantity of user?"
+        }
     }
+    Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Get-Events {
     # Check token status/refresh
@@ -593,19 +599,28 @@ function Get-Events {
     # Provide option to create a new event
     Add-Event -n "+new event" -i "_create"
     # Always provide option to change events
-    Add-Choice -k "EVENT" -d "Create/Switch/Join Event" -c $($config.GoogleEventName) -f "Set-Event" -todo
+    #Add-Choice -k "EVENT" -d "Create/Switch/Join Event" -c $($config.GoogleEventName) -f "Set-Event" -todo
     #Add-Choice -k "RESETPW" -d "Reset instructor email" -c $config.InstructorEmail -f "Reset-Password"
     $eventDefault = $eventList | Where-Object default -eq $true
     if ($eventDefault.count -eq 1) {
-        Send-Update -t 0 -c "Setting event with default:  $eventDefault"
-        Set-Event -p $eventDefault
+        #Send-Update -t 0 -c "Setting event with default:  $eventDefault"
+        #Set-Event -p $eventDefault
+        Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+        Set-Prefs -k "GoogleEventId" -v $eventSelected.id
+        Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
+    }
+    else {
+        #Set-Event
+        Set-Prefs -k "GoogleEventName"
+        Set-Prefs -k "GoogleEventId"
+        Set-Prefs -k "GoogleEventEmail"
     }
 }
 function Set-Event {
-    param(
-        [object] $preset # optional preset to bypass selection
-    )
-    $eventSelected = $preset
+    # param(
+    #     [object] $preset # optional preset to bypass selection
+    # )
+    # $eventSelected = $preset
     #Prompt for event option
     while (-not $eventSelected) {
         write-output $eventList | sort-object -property Option | format-table $eventColumns | Out-Host
@@ -628,20 +643,17 @@ function Set-Event {
         Set-Prefs -k "GoogleEventId" -v $eventSelected.id
         Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
         # And reset harness config assuming this new event uses a different account and not preset
-        if (-not $preset) {
-            Set-Prefs -k "HarnessAccount"
-            Set-Prefs -k "HarnessAccountId"
-            Set-Prefs -k "HarnessPAT"
-        }
-        $members = Get-GroupMembers -s
+        # if (-not $preset) {
+        #     Set-Prefs -k "HarnessAccount"
+        #     Set-Prefs -k "HarnessAccountId"
+        #     Set-Prefs -k "HarnessPAT"
+        # }
+        # $members = Get-GroupMembers -s
         # Add option to change event later
-        if ($members.memberCount -gt 0) {
-            $existingUsers = "$($members.memberCount) attendee(s)"
-        }
-        Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $existingUsers -f "Add-EventUsers" -t
-        Add-Choice -k "GETDETAILS" -d "Save event details" -c "$($members.ownerCount) instructor(s)" -f "Save-EventDetails"
-        Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
-        Get-HarnessConfiguration
+        # if ($members.memberCount -gt 0) {
+        #     $existingUsers = "$($members.memberCount) attendee(s)"
+        # }
+        # Get-HarnessConfiguration
     }
 }
 function Save-EventDetails {
@@ -746,6 +758,24 @@ function Get-ClassroomStatus {
     Add-Choice -k "AZCONFIG" -d "Enable Azure classroom" -c "not enabled" -f New-AZResourceGroup
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
+function Sync-Event {
+    # Confirm required values exist
+    Get-Events
+    if (-not $config.GoogleEventName) {
+        Send-Update -t 2 -c "Sorry, there must be a Google event configured."
+        return
+    }
+    if (-not $config.HarnessPAT -or -not $config.HarnessAccountId -or -not $config.HarnessAccount) {
+        Send-Update -t 2 -c "Sorry, a Harness token, AccountId, and Account Name are required to setup an event."
+        return
+    }
+    if (_not $config.HarnessOrg) {
+        Send-Update -t 2 -c "Sorry, a Harness Org must be available before setting up an event."
+    }
+    Add-EventUsers
+    Add-HarnessEventDetails
+
+}
 
 # Google-Specific Event Functions
 function Get-GoogleLogin {
@@ -759,36 +789,22 @@ function Get-GoogleLogin {
         # Allow @harnessevents.io email for testing- but provide warning this isn't normal for "production"
         $testGoogleAccount = Send-Update -t 0 -c "Didn't find @harness.io email, trying @harnessevents.io" -r "gcloud auth list --filter=account:'harnessevents.io' --format='value(account)'"
         if ($testGoogleAccount.count -eq 1) {
-            Send-Update -t 0 -o -c "Using $testGoogleAccount.  Just FYI:Event email should only be used when testing" -r "gcloud config set account $testGoogleAccount"
+            Send-Update -t 0 -o -c "Using $testGoogleAccount.  Just FYI:Event email should only be used when testing" -r "gcloud config set account $testGoogleAccount --no-user-output-enabled"
             Send-Update -t 2 -c "Used event email $testGoogleAccount.  This should only be done when testing- not in real events."
             $currentUser = $testGoogleAccount
         }
     }
-    Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin" -t
+    #Add-Choice -k "GOOGLEUSER" -d "Login/Change Google Account" -c $currentUser -f "Set-GoogleLogin" -t
     if ($currentUser) {
-        Send-Update -t 0 -c "Using existing email: $currentUser"
-        Set-GoogleLogin -p $currentUser
-    }
-}
-function Set-GoogleLogin {
-    [CmdletBinding()]
-    param (
-        [Parameter()]
-        [string]
-        $preset
-    )
-    if ($preset) {
-        $currentUser = $preset
+        Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
+        Set-Prefs -k "GoogleUser" -v $currentUser
+        #Set-GoogleLogin -p $currentUser
+        
     }
     else {
-        Send-Update -t 1 -c "Opening login page..." -r "gcloud auth login"
-    }
-    $currentUser = Send-Update -t 0 -c "Confirming Login" -r "gcloud auth list --filter=status:ACTIVE --format='value(account)'"
-    if (-not $currentUser) { return } else {
-        Set-Prefs -k "GoogleUser" -v $currentUser
-        # Add an instructor email as well
-        Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-        Get-Events
+        Send-Update -t 2 -c "Sorry, you don't currently have a '@harness.io' email in your logged in accounts."
+        Send-Update -t 2 -c "Please login with 'gcloud auth login' and retry."
+        exit
     }
 }
 function Get-GoogleAccessToken {
@@ -1063,17 +1079,16 @@ function Get-GroupKey {
 
 # Harness Functions
 function Get-HarnessConfiguration {
-    Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration" -t
+    #Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration" -t
     if ($config.HarnessPAT -and $config.HarnessAccountId -and $config.HarnessAccount) {
         Set-HarnessConfiguration -p $config.HarnessPAT
     }
     # TODO This should probably be done in a neater way.  Coming back in second pass now to add up-front support
-    if ($config.presetToken) {
-        $presetToken = $config.presetToken
-        Set-Prefs -k "presetToken"
-        Set-HarnessConfiguration -p $presetToken
-    }
-
+    # if ($config.presetToken) {
+    #     $presetToken = $config.presetToken
+    #     Set-Prefs -k "presetToken"
+    #     Set-HarnessConfiguration -p $presetToken
+    # }
 }
 function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
@@ -1082,10 +1097,10 @@ function Add-HarnessEventDetails {
     # It will load all secrets starting with 'org' from google secret manager
     # It will load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
     # It will add the organization for the chosen event, add projects for everyone, and add users to the attendee role
-    if (-not $config.GoogleEventName) {
-        Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
-        exit
-    }
+    # if (-not $config.GoogleEventName) {
+    #     Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
+    #     exit
+    # }
     Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
     $attendees = Get-GroupMembers
     # Add needed flags
@@ -1170,17 +1185,17 @@ function Remove-HarnessEventDetails {
     return $true
 }
 function Set-HarnessConfiguration {
-    [CmdletBinding()]
-    param (
-        [Parameter()]
-        [string]
-        $presetToken
-    )
-    if ($presetToken) {
-        $response = Test-Connectivity -harnessToken $presetToken
+    #[CmdletBinding()]
+    # param (
+    #     [Parameter()]
+    #     [string]
+    #     $presetToken
+    # )
+    if ($config.HarnessPAT) {
+        $response = Test-Connectivity -harnessToken $config.HarnessPAT
         if ($response) {
             Send-Update -t 0 -c "Cached token worked"
-            $goodToken = $presetToken
+            $goodToken = $config.HarnessPAT
         }
     }
     while (-not $goodToken) {
@@ -1225,20 +1240,19 @@ function Set-HarnessConfiguration {
     # Save Harness details
     Save-HarnessConfig
     # We have a valid Harness Account- move on to initializing projects for attendees or if done, move on to classroom setup
-
-    if ($config.projectsCreated) {
-        Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
-        Get-ClassroomStatus
-    }
-    else {
-        if ($config.presetUsers) {
-            $presetUsers = $config.presetUsers
-            Set-Prefs -k "presetUsers"
-            Send-Update -t 0 -c "Sneaking in preset users- this could be better :\"
-            Add-EventUsers -preset $presetUsers
-        }
-        Add-HarnessEventDetails
-    }
+    # if ($config.projectsCreated) {
+    #     Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
+    #     Get-ClassroomStatus
+    # }
+    # else {
+    #     if ($config.presetUsers) {
+    #         $presetUsers = $config.presetUsers
+    #         Set-Prefs -k "presetUsers"
+    #         Send-Update -t 0 -c "Sneaking in preset users- this could be better :\"
+    #         Add-EventUsers -preset $presetUsers
+    #     }
+    #     Add-HarnessEventDetails
+    # }
 }
 function Save-HarnessConfig {
     if ($config.HarnessList) {
@@ -1299,7 +1313,7 @@ function Test-Connectivity {
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
     Set-Prefs -k "HarnessPAT" -v $harnessToken
-    $choices | where-object { $_.key -eq "HARNESSCFG" } | ForEach-Object { $_.current = $config.HarnessAccount }
+    #$choices | where-object { $_.key -eq "HARNESSCFG" } | ForEach-Object { $_.current = $config.HarnessAccount }
     # OMG Why do 2 API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
     $fixGodDamnEnv = $response.data.cluster.replace("-","")
     $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
@@ -1545,14 +1559,11 @@ function Get-Organizations {
 }
 function Enable-GoogleAuth {
     $uri1 = "https://app.harness.io/ng/api/authentication-settings/oauth/update-providers?accountIdentifier=$($config.HarnessAccountId)"
-
-
     $body = @{
         "allowedProviders" = @(
             "GOOGLE"
         )
         "settingsType"     = "OAUTH"
-
     } | Convertto-Json
     Invoke-RestMethod -method 'PUT' -ContentType "application/json" -Uri $uri1 -Headers $HarnessHeaders -Body $body | out-null
     $uri2 = "https://app.harness.io/ng/api/authentication-settings/update-auth-mechanism?accountIdentifier=$($config.HarnessAccountId)&authenticationMechanism=OAUTH"
@@ -1894,6 +1905,23 @@ function Update-FeatureFlag {
 }
 
 # Classroom Functions
+function Set-GCP-Project {
+    #Toggle GCP Project
+    if ($config.UseGoogleClassroom) {
+        Set-Prefs -k "UseGoogleClassroom"
+    }
+    else {
+        Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
+    }
+}
+function Set-Azure-Project {
+    #Toggle Azure Project
+    SEnd-Update -t 1 -c "Azure isn't available yet"
+}
+function Set-AWS-Project {
+    #Toggle AWS Project
+    SEnd-Update -t 1 -c "AWS isn't available yet"
+}
 function New-GCP-Project {
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
@@ -2004,12 +2032,22 @@ function New-AWSProject {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 Get-GoogleLogin
-while ($choices.count -gt 0) {
-    $cmd = Get-Choice($choices)
-    if ($cmd) {
-        Invoke-Expression $cmd.callFunction
-    }
-    else { write-host -ForegroundColor red "`r`nY U no pick existing option?" }
+
+while ($true) {
+    Get-Events
+    # Offer Options to configure event
+    Add-Choice -k "EVENT" -d "Create/Switch Event" -c $config.GoogleEventName -f "Get-Events" -todo
+    Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $config.HarnessAccount -f "Set-HarnessConfiguration" -t
+    Add-Choice -k "GCPCONFIG" -d "Enable/Disable GCP classroom" -c $config.UseGoogleClassroom -f "Set-GCP-Project"
+    Add-Choice -k "AZURECONFIG" -d "Enable/Disable GCP classroom" -c $config.UseAwsClassroom -f "Set-Azure-Project"
+    Add-Choice -k "AWSCONFIG" -d "Enable/Disable GCP classroom" -c $config.UseAzureClassroom -f "Set-AWS-Project"
+    Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $config.UserEventCount -f "Set-EventUsers" -t
+    # Options to sync options/delete
+    Add-Choice -k "GETDETAILS" -d "Save event details" -f "Sync-Event"
+    Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
+
+    Get-Choice
+
 }
 
 # Get-GoogleLogin
@@ -2022,3 +2060,4 @@ while ($choices.count -gt 0) {
 # projects created no and "preset users" -> Add-Eventusers
 # Add-HarnessEventDetails
 # Get-ClassroomStatus
+# Save-EventDetails
