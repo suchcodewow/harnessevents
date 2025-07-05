@@ -427,7 +427,7 @@ function Get-Randomstring {
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
-    $adminOrg = gcloud organizations list --filter='display_name:harnessevents.io' --format=json | Convertfrom-Json
+    $adminOrg = invoke-expression -Command "gcloud organizations list --filter='display_name:harnessevents.io' --format=json" | Convertfrom-Json
     $adminOrgId = $adminOrg.name.split("/")[1]
     Set-Prefs -k "AdminOrgId" -v $adminOrgId
     # Retrieve all child projects except administration
