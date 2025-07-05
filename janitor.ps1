@@ -423,9 +423,9 @@ function Get-Randomstring {
     return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
 
 }
-Set-StrictMode -Off
+# Set-StrictMode -Off
 pwsh --version
-write-host $(gcloud config list)
+write-host $(gcloud auth activate-service-account --key-file=$keyfile)
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
