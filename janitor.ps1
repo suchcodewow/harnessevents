@@ -424,8 +424,7 @@ function Get-Randomstring {
 
 }
 # Set-StrictMode -Off
-pwsh --version
-write-host $(gcloud auth activate-service-account --key-file=$keyfile)
+
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
@@ -499,6 +498,8 @@ Get-Prefs($Myinvocation.MyCommand.Source)
 Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
 # Main
+pwsh --version
+write-host $(gcloud auth activate-service-account --key-file=$keyfile)
 $maxProjectAge = 1
 $projects = Get-ProjectList
 Send-Update -t 1 -c "$($projects.count) total projects to check."
