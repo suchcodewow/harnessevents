@@ -423,7 +423,7 @@ function Get-Randomstring {
     return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
 
 }
-
+Set-StrictMode -Off
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
