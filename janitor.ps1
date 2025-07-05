@@ -446,6 +446,28 @@ function Get-EventJson {
 function Save-EventJson {
 
 }
+function Remove-GCP-Project {
+    # Delete project if it exists
+    if ($config.GoogleProjectId) {
+        Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $($config.GoogleProjectId) --quiet"
+        $Counter = 0
+        Do {
+            $counter++
+            if ($counter -ge 10) {
+                Send-Update -t 2 -c "Wow, something went terrrrrrribly wrong trying to remove Google Project: $($config.GoogleProjectId)"
+                exit
+            }
+            $projectCheck = Send-Update -t 1 -c "Waiting for project delete confirmation..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
+            Start-Sleep -s 5
+        } while ($projectCheck)
+        Send-Update -t 1 -c "Google Project successfully removed"
+        Set-Prefs -k "GoogleProjectId"
+        Set-Prefs -k "GoogleProject"
+    }
+    else {
+        Send-Update -t 1 -c "Tried removing Google Project- but no Google Project ID found in config"
+    }
+}
 
 # Script Functions
 function Get-State {
@@ -475,6 +497,7 @@ Get-Prefs($Myinvocation.MyCommand.Source)
 Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
 # Main
+$maxProjectAge = 1
 $projects = Get-ProjectList
 Send-Update -t 1 -c "$($projects.count) total projects to check."
 Send-Update -t 1 -c "Projects to Review:`n$($projects.name)"
@@ -487,15 +510,22 @@ foreach ($project in $projects) {
         Set-Error -errormsg "$issueStart doesn't follow naming convention 'event-'."
         return
     }
-    $clusterExists = Send-Update -t 1 -c "Check $($project.projectId) for kubernetes cluster" -r "gcloud container clusters list --project=$($project.projectId) --format=json " | Convertfrom-Json
-    if ($clusterExists.count -ge 2) {
-        Send-Update -t 2 -c "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
-        $issuesList += "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+    Send-Update -t 1 -c "Project created at $($project.createTime) UTC."
+    $currentTime = Get-Date -AsUTC
+    $projectAgeHours = $currentTime - $project.createTime | select-object -expandproperty TotalHours
+    Send-Update -t 1 -c "Current time is $currentTime UTC. Project is $projectAgeHours hours old."
+    if ($projectAgeHours -gt $maxProjectAge) {
+        Send-Update -t 1 -c "Project is over the limit of $maxProjectAge hour(s) old."
+
     }
+
+    # Get cluster status
+    # $clusterExists = Send-Update -t 1 -c "Check $($project.projectId) for kubernetes cluster" -r "gcloud container clusters list --project=$($project.projectId) --format=json " | Convertfrom-Json
+    # if ($clusterExists.count -ge 2) {
+    #     Send-Update -t 2 -c "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+    #     $issuesList += "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+    # }
 }
-
-
-#Set-Prefs -k "PreviousList" -v $config.CurrentList
-#Set-Prefs -k "CurrentList" -v $projects
+$issuesList
 # Post-flight
 #Save-State

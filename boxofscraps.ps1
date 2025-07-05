@@ -1831,11 +1831,6 @@ function Add-Delegate {
         [string]
         $delegatePrefix #expecting gcp/az/aws
     )
-    $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-    $body = @{
-        "status"     = "CONNECTED"
-        "filterType" = "Delegate"
-    } | Convertto-Json
     #Check if there was an existing delegate
     Send-Update -t 1 -c "Checking for existing delegate"
     $delegateStatus = Get-DelegateStatus
@@ -2000,7 +1995,6 @@ function Remove-GCP-Project {
     else {
         Send-Update -t 1 -c "Tried removing Google Project- but no Google Project ID found in config"
     }
-    #Get-ClassroomStatus
 }
 function New-GCP-Cluster {
     # Check if kubernetes cluster exists
@@ -2049,15 +2043,3 @@ while ($true) {
     Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
     Get-Choice
 }
-
-# Get-GoogleLogin
-# Set-GoogleLogin
-# Get-Events
-# Set-Event
-# Get-HarnessConfiguration
-# Set-HarnessConfiguration -> Save-HarnessConfig
-# projects created yes -> Get-ClassroomStatus
-# projects created no and "preset users" -> Add-Eventusers
-# Add-HarnessEventDetails
-# Get-ClassroomStatus
-# Save-EventDetails
