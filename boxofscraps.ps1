@@ -489,9 +489,9 @@ function New-Event {
             Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
         }
     }
-    Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+    #Set-Prefs -k "GoogleEventName" -v $eventSelected.name
     Set-Prefs -k "GoogleEventId" -v $eventSelected.id
-    Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
+    #Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
     Get-Events
 }
 function Add-Event {
@@ -574,12 +574,7 @@ function Set-EventUsers {
     Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Get-Events {
-    [CmdletBinding()]
-    param (
-        [Parameter()]
-        [switch]
-        $preset
-    )
+
     # Check token status/refresh
     Get-GoogleAccessToken
     # Create an instructor email account if needed
@@ -628,7 +623,7 @@ function Set-Event {
     # )
     # $eventSelected = $preset
     #Prompt for event option
-    Get-Events
+    
     while (-not $eventSelected) {
         write-output $eventList | sort-object -property Option | format-table $eventColumns | Out-Host
         $newEvent = read-host -prompt "Select existing or create new event? <enter> to abort"
@@ -646,9 +641,9 @@ function Set-Event {
     }
     else {
         # Cache choice details
-        Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+        #Set-Prefs -k "GoogleEventName" -v $eventSelected.name
         Set-Prefs -k "GoogleEventId" -v $eventSelected.id
-        Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
+        #Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
         # And reset harness config assuming this new event uses a different account and not preset
         # if (-not $preset) {
         #     Set-Prefs -k "HarnessAccount"
@@ -699,7 +694,7 @@ function Remove-Event {
         return
     }
     # Remove Harness event
-    if ($HarnessFFHeaders) {
+    if ($config.HarnessPAT) {
         $harnessRemoved = Remove-HarnessEventDetails
         if ($harnessRemoved) {
             Send-Update -t 0 -c "Successfully removed Harness config"
@@ -766,8 +761,26 @@ function Get-ClassroomStatus {
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
 function Sync-Event {
-    # Confirm required values exist
-    Get-Events
+    # Set any needed variables
+    $eventSelected = $eventList | where-object { $_.id -eq $config.GoogleEventId }
+    if ($eventSelected.count -eq 1) {
+        Set-Prefs -k "GoogleEventName" -v $eventSelected.name
+        Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
+        Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
+    }
+    else {
+        Send-Update -t 2 -c "Please select a valid event"
+        return
+    }
+    $script:HarnessHeaders = @{
+        'x-api-key'    = $config.HarnessPAT
+        'Content-Type' = 'application/json'
+    }
+    $script:HarnessFFHeaders = @{
+        'x-api-key'    = $config.HarnessFFToken
+        'Content-Type' = 'application/json'
+    }
+    #Confirm required values exist
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Sorry, there must be a Google event configured."
         return
@@ -776,12 +789,22 @@ function Sync-Event {
         Send-Update -t 2 -c "Sorry, a Harness token, AccountId, and Account Name are required to setup an event."
         return
     }
-    if (_not $config.HarnessOrg) {
-        Send-Update -t 2 -c "Sorry, a Harness Org must be available before setting up an event."
+    if (-not $config.HarnessOrg) {
+        Send-Update -t 2 -c "Sorry, a Harness Org name must be available before setting up an event."
+        return
     }
     Add-EventUsers
     Add-HarnessEventDetails
-
+    if ($config.UseGoogleClassroom) {
+        New-GCP-Project
+    }
+    else {
+        Remove-GCP-Project
+    }
+    Save-EventDetails
+    # projects created yes -> Get-ClassroomStatus
+    # projects created no and "preset users" -> Add-Eventusers
+    # Save-EventDetails
 }
 
 # Google-Specific Event Functions
@@ -1085,18 +1108,6 @@ function Get-GroupKey {
 }
 
 # Harness Functions
-function Get-HarnessConfiguration {
-    #Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $($config.HarnessAccount) -f "Set-HarnessConfiguration" -t
-    if ($config.HarnessPAT -and $config.HarnessAccountId -and $config.HarnessAccount) {
-        Set-HarnessConfiguration -p $config.HarnessPAT
-    }
-    # TODO This should probably be done in a neater way.  Coming back in second pass now to add up-front support
-    # if ($config.presetToken) {
-    #     $presetToken = $config.presetToken
-    #     Set-Prefs -k "presetToken"
-    #     Set-HarnessConfiguration -p $presetToken
-    # }
-}
 function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
     # It will enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
@@ -1104,11 +1115,6 @@ function Add-HarnessEventDetails {
     # It will load all secrets starting with 'org' from google secret manager
     # It will load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
     # It will add the organization for the chosen event, add projects for everyone, and add users to the attendee role
-    # if (-not $config.GoogleEventName) {
-    #     Send-Update -t 2 -c "Expected a Google Event Name for Harness config. I'm giving up and moving to Alaska."
-    #     exit
-    # }
-    Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
     $attendees = Get-GroupMembers
     # Add needed flags
     $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
@@ -1141,9 +1147,7 @@ function Add-HarnessEventDetails {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    Add-Choice -k "HARNESSINIT" -d "Sync Harness with Attendee List" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
-    Set-Prefs -k "projectsCreated" -v "true"
-    Get-ClassroomStatus
+    #Add-Choice -k "HARNESSINIT" -d "Sync Harness with Attendee List" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
 }
 function Remove-HarnessEventDetails {
     # Set Harness flags to post-event state
@@ -1309,14 +1313,7 @@ function Test-Connectivity {
         return $false
     }
     Send-Update -t 0 -c "Token validation successful!"
-    $script:HarnessHeaders = @{
-        'x-api-key'    = $harnessToken
-        'Content-Type' = 'application/json'
-    }
-    $script:HarnessFFHeaders = @{
-        'x-api-key'    = $config.HarnessFFToken
-        'Content-Type' = 'application/json'
-    }
+
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
     Set-Prefs -k "HarnessPAT" -v $harnessToken
@@ -1325,7 +1322,7 @@ function Test-Connectivity {
     $fixGodDamnEnv = $response.data.cluster.replace("-","")
     $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
     if ($correctEnv -ne "Prod1") {
-        Send-Update -t 2 "$correctEnv isn't the expected environment (Prod1)- just FYI if something doesn't work right."
+        Send-Update -t 2 "$correctEnv isn't the expected environment of Prod1 - just FYI if something doesn't work right."
     }
     Set-Prefs -k "HarnessEnv" -v $correctEnv
     return $response
@@ -1834,9 +1831,10 @@ function Add-Delegate {
     #Check if there was an existing delegate- delete if so to reduce confusion
     # TODO possible? will delegate delete if it was associated to anything
     Send-Update -t 1 -c "Checking for existing delegate"
-    $pretestDelegate = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType 'application/json'
-    if ($pretestDelegate) {
-        Remove-Delegate -delegatePrefix gcp
+    $delegateStatus = Get-DelegateStatus
+    #$pretestDelegate = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType 'application/json'
+    if ($delegateStatus.name.contains("$delegatePrefix-delegate")) {
+        Remove-Delegate -delegatePrefix $delegatePrefix
     }
     Send-Update -t 1 -c "Get $delegatePrefix Delegate Config" -r "Get-DelegateConfig -d $delegatePrefix"
     Send-Update -t 1 -c "Apply $delegatePrefix delegate yaml" -r "kubectl apply -f $delegatePrefix.yaml"
@@ -1932,19 +1930,18 @@ function Set-AWS-Project {
 function New-GCP-Project {
     # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
     Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
-    # Get organization of admin project to assign to new project
-    $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | ConvertFrom-Json
-    Set-Prefs -k "GoogleOrgId" -v ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
-    # Get billing project of admin project to associate with this project
-    $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
-    Set-Prefs -k "GoogleBillingProject" -v $AdminProjectInfo.name.split("/")[1]
-    # Create new google project if needed
     $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
     if ($projectCheck) {
         # Project already exists- skip creation
         Send-Update -t 1 -c "Project already exists- skipping creation."
     }
     else {
+        # Get organization of admin project to assign to new project
+        $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | ConvertFrom-Json
+        $GoogleOrgId = ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
+        # Get billing project of admin project to associate with this project
+        $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
+        $GoogleBillingProject = $AdminProjectInfo.name.split("/")[1]
         # Generate a unique project ID following all of Google's goofy rules
         if ($GoogleProject.length -gt 16) {
             Set-Prefs -k "GoogleProject" -v $config.GoogleProject.substring(0,16)
@@ -1959,14 +1956,13 @@ function New-GCP-Project {
         # Associate project with billing account
         Send-Update -t 1 -o -c "Associate billing account" -r "gcloud billing projects link $projectID --billing-account=$GoogleBillingProject"
         Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
-        Set-Prefs -k "GoogleProject" -v $GoogleProject
         # Add users to project
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
         # Create worker, get keys, add to IAM
-        Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
-        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
-        Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
+        #Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
+        #Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
+        #Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         # Enable API's needed for workshops
         $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
         Foreach ($api in $projectApis) {
@@ -2005,9 +2001,9 @@ function Remove-GCP-Project {
         Set-Prefs -k "GoogleProject"
     }
     else {
-        Send-Update -t 2 -c "Tried removing Google Project- but no Google Project ID found in config"
+        Send-Update -t 1 -c "Tried removing Google Project- but no Google Project ID found in config"
     }
-    Get-ClassroomStatus
+    #Get-ClassroomStatus
 }
 function New-GCP-Cluster {
     # Check if kubernetes cluster exists
@@ -2039,22 +2035,20 @@ function New-AWSProject {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 Get-GoogleLogin
-
+Get-Events
 while ($true) {
     #Get-Events -preset
     # Offer Options to configure event
     Add-Choice -k "EVENT" -d "Create/Switch Event" -c $config.GoogleEventName -f "Set-Event" -todo
     Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $config.HarnessAccount -f "Set-HarnessConfiguration" -t
     Add-Choice -k "GCPCONFIG" -d "Enable/Disable GCP classroom" -c $config.UseGoogleClassroom -f "Set-GCP-Project"
-    Add-Choice -k "AZURECONFIG" -d "Enable/Disable GCP classroom" -c $config.UseAwsClassroom -f "Set-Azure-Project"
-    Add-Choice -k "AWSCONFIG" -d "Enable/Disable GCP classroom" -c $config.UseAzureClassroom -f "Set-AWS-Project"
+    Add-Choice -k "AZURECONFIG" -d "Enable/Disable Azure classroom" -c $config.UseAwsClassroom -f "Set-Azure-Project"
+    Add-Choice -k "AWSCONFIG" -d "Enable/Disable AWS classroom" -c $config.UseAzureClassroom -f "Set-AWS-Project"
     Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $config.UserEventCount -f "Set-EventUsers" -t
-    # Options to sync options/delete
+    # Options to setup or remove choices
     Add-Choice -k "GETDETAILS" -d "Save event details" -f "Sync-Event"
     Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
-
     Get-Choice
-
 }
 
 # Get-GoogleLogin
