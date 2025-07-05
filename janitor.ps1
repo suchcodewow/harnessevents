@@ -1,4 +1,5 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
+
 param (
     [switch] $help, # show other command options and exit
     [switch] $verbose, # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
@@ -423,7 +424,6 @@ function Get-Randomstring {
     return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
 
 }
-# Set-StrictMode -Off
 
 # Google Functions
 function Get-ProjectList {
@@ -499,7 +499,7 @@ Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
 # Main
 pwsh --version
-write-host $(gcloud auth activate-service-account --key-file=$keyfile)
+write-host $(gcloud auth activate-service-account --key-file=key.json)
 $maxProjectAge = 1
 $projects = Get-ProjectList
 Send-Update -t 1 -c "$($projects.count) total projects to check."
@@ -531,5 +531,5 @@ if ($issuesList) {
     Send-Update -t 2 -c "Triggered failed state for this run.  Errors found:`n$issuesList"
     throw 1
 }
-# Post-flight
+
 #Save-State
