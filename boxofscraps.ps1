@@ -739,11 +739,19 @@ function Remove-Event {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
-    # Remove event from the  
-    #$eventList = $eventList | Where-Object { $_.Name -ne $config.GoogleEventName }
     Set-Prefs -k "GoogleEventEmail"
     Set-Prefs -k "GoogleEventId"
     Set-Prefs -k "GoogleEventName"
+    Set-Prefs -k "HarnessPAT"
+    Set-Prefs -k "HarnessAccountId"
+    Set-Prefs -k "HarnessAccount"
+    Set-Prefs -k "UserEventCount"
+    Set-Prefs -k "UseGoogleClassroom"
+    Set-Prefs -k "UseAzureClassroom"
+    Set-Prefs -k "UseAWSClassroom"
+    Set-Prefs -k "HarnessOrg"
+    Set-Prefs -k "GoogleProject"
+    Set-Prefs -k "GoogleProjectId"       
     Get-Events
 }
 function Get-ClassroomStatus {
