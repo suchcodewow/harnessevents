@@ -424,6 +424,7 @@ function Get-Randomstring {
 
 }
 Set-StrictMode -Off
+pwsh --version
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
