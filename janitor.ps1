@@ -447,26 +447,26 @@ function Save-EventJson {
 
 }
 function Remove-GCP-Project {
-    # Delete project if it exists
-    if ($config.GoogleProjectId) {
-        Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $($config.GoogleProjectId) --quiet"
-        $Counter = 0
-        Do {
-            $counter++
-            if ($counter -ge 10) {
-                Send-Update -t 2 -c "Wow, something went terrrrrrribly wrong trying to remove Google Project: $($config.GoogleProjectId)"
-                exit
-            }
-            $projectCheck = Send-Update -t 1 -c "Waiting for project delete confirmation..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
-            Start-Sleep -s 5
-        } while ($projectCheck)
-        Send-Update -t 1 -c "Google Project successfully removed"
-        Set-Prefs -k "GoogleProjectId"
-        Set-Prefs -k "GoogleProject"
-    }
-    else {
-        Send-Update -t 1 -c "Tried removing Google Project- but no Google Project ID found in config"
-    }
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $projectId
+    )
+    Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $projectId --quiet"
+    $Counter = 0
+    Do {
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 2 -c "Wow, something went terrrrrrribly wrong trying to remove Google Project: $projectId"
+            return
+        }
+        $projectCheck = Send-Update -t 1 -c "Waiting for project delete confirmation..." -r "gcloud projects list --filter='projectId:$projectId' --format=json" | convertfrom-json
+        Start-Sleep -s 5
+    } while ($projectCheck)
+    Send-Update -t 1 -c "Google Project successfully removed"
+    Set-Prefs -k "GoogleProjectId"
+    Set-Prefs -k "GoogleProject"
 }
 
 # Script Functions
@@ -488,7 +488,7 @@ function Set-Error {
         $errormsg
     )
     Send-Update -t 2 -c $errormsg
-    $issuesList += $errormsg + "`n"
+    $script:issuesList += $issueStart + $errormsg + "`n"
 }
 
 # Pre-flight
@@ -501,11 +501,9 @@ $maxProjectAge = 1
 $projects = Get-ProjectList
 Send-Update -t 1 -c "$($projects.count) total projects to check."
 Send-Update -t 1 -c "Projects to Review:`n$($projects.name)"
-#Create list of issues to email if problems pop up.
-$script:issuesList = $false
 foreach ($project in $projects) {
     Send-Update -t 1 -c "Reviewing project $($project.name)"
-    $issueStart = "Google Project: $($project.name) [$project.projectId] "
+    $script:issueStart = "Google Project: $($project.name) [$project.projectId] "
     if ($project.name.substring(0,6) -ne "event-") {
         Set-Error -errormsg "$issueStart doesn't follow naming convention 'event-'."
         return
@@ -516,7 +514,7 @@ foreach ($project in $projects) {
     Send-Update -t 1 -c "Current time is $currentTime UTC. Project is $projectAgeHours hours old."
     if ($projectAgeHours -gt $maxProjectAge) {
         Send-Update -t 1 -c "Project is over the limit of $maxProjectAge hour(s) old."
-
+        Remove-GCP-Project -projectId $project.projectId
     }
 
     # Get cluster status
@@ -526,6 +524,9 @@ foreach ($project in $projects) {
     #     $issuesList += "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
     # }
 }
-$issuesList
+if ($issuesList) {
+    Send-Update -t 2 -c "Triggered failed state for this run.  Errors found:`n$issuesList"
+    throw 1
+}
 # Post-flight
 #Save-State
