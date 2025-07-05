@@ -425,6 +425,7 @@ function Get-Randomstring {
 }
 Set-StrictMode -Off
 pwsh --version
+write-host $(gcloud config list)
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
