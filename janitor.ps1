@@ -492,8 +492,6 @@ function Set-Error {
     $script:issuesList += $issueStart + $errormsg + "`n"
 }
 
-# Pre-flight
-#Get-State
 Get-Prefs($Myinvocation.MyCommand.Source)
 Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
