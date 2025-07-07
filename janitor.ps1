@@ -1,4 +1,5 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
+
 param (
     [switch] $help, # show other command options and exit
     [switch] $verbose, # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
@@ -427,7 +428,7 @@ function Get-Randomstring {
 # Google Functions
 function Get-ProjectList {
     # Retrieve administration organization
-    $adminOrg = gcloud organizations list --filter='display_name:harnessevents.io' --format=json | Convertfrom-Json
+    $adminOrg = invoke-expression -Command "gcloud organizations list --filter='display_name:harnessevents.io' --format=json" | Convertfrom-Json
     $adminOrgId = $adminOrg.name.split("/")[1]
     Set-Prefs -k "AdminOrgId" -v $adminOrgId
     # Retrieve all child projects except administration
@@ -446,8 +447,30 @@ function Get-EventJson {
 function Save-EventJson {
 
 }
+function Remove-GCP-Project {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $projectId
+    )
+    Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $projectId --quiet"
+    $Counter = 0
+    Do {
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 2 -c "Wow, something went terrrrrrribly wrong trying to remove Google Project: $projectId"
+            return
+        }
+        $projectCheck = Send-Update -t 1 -c "Waiting for project delete confirmation..." -r "gcloud projects list --filter='projectId:$projectId' --format=json" | convertfrom-json
+        Start-Sleep -s 5
+    } while ($projectCheck)
+    Send-Update -t 1 -c "Google Project successfully removed"
+    Set-Prefs -k "GoogleProjectId"
+    Set-Prefs -k "GoogleProject"
+}
 
-# State Functions
+# Script Functions
 function Get-State {
     gcloud auth activate-service-account --key-file=account.json
     gcloud storage cp gs://harnesseventsdata/config/janitor.ps1.conf .
@@ -458,18 +481,53 @@ function Save-State {
     gcloud storage cp janitor.ps1.conf gs://harnesseventsdata/config/
     gcloud storage cp janitor.ps1.log gs://harnesseventsdata/config/
 }
+function Set-Error {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $errormsg
+    )
+    Send-Update -t 2 -c $errormsg
+    $script:issuesList += $issueStart + $errormsg + "`n"
+}
 
-# Pre-flight
-Get-State
 Get-Prefs($Myinvocation.MyCommand.Source)
 Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
 # Main
-Send-Update -t 1 -c "$($allProjects.count) total projects to check."
+pwsh --version
+write-host $(gcloud auth activate-service-account --key-file=key.json)
+$maxProjectAge = 1
 $projects = Get-ProjectList
+Send-Update -t 1 -c "$($projects.count) total projects to check."
+Send-Update -t 1 -c "Projects to Review:`n$($projects.name)"
+foreach ($project in $projects) {
+    Send-Update -t 1 -c "Reviewing project $($project.name)"
+    $script:issueStart = "Google Project: $($project.name) [$project.projectId] "
+    if ($project.name.substring(0,6) -ne "event-") {
+        Set-Error -errormsg "$issueStart doesn't follow naming convention 'event-'."
+        return
+    }
+    Send-Update -t 1 -c "Project created at $($project.createTime) UTC."
+    $currentTime = Get-Date -AsUTC
+    $projectAgeHours = $currentTime - $project.createTime | select-object -expandproperty TotalHours
+    Send-Update -t 1 -c "Current time is $currentTime UTC. Project is $projectAgeHours hours old."
+    if ($projectAgeHours -gt $maxProjectAge) {
+        Send-Update -t 1 -c "Project is over the limit of $maxProjectAge hour(s) old."
+        Remove-GCP-Project -projectId $project.projectId
+    }
 
+    # Get cluster status
+    # $clusterExists = Send-Update -t 1 -c "Check $($project.projectId) for kubernetes cluster" -r "gcloud container clusters list --project=$($project.projectId) --format=json " | Convertfrom-Json
+    # if ($clusterExists.count -ge 2) {
+    #     Send-Update -t 2 -c "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+    #     $issuesList += "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
+    # }
+}
+if ($issuesList) {
+    Send-Update -t 2 -c "Triggered failed state for this run.  Errors found:`n$issuesList"
+    throw 1
+}
 
-Set-Prefs -k "PreviousList" -v $config.CurrentList
-Set-Prefs -k "CurrentList" -v $projects
-# Post-flight
-Save-State
+#Save-State
