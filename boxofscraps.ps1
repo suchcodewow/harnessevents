@@ -1178,7 +1178,7 @@ function Remove-HarnessEventDetails {
     Send-Update -t 1 -c "Removing @harnessevents.io users from account: $($config.HarnessAccount)"
     $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
     $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
-    $eventUsers = $response.data.content | Where-Object { $_.name.Contains("@harnessevents.io") }
+    $eventUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
     foreach ($user in $eventUsers) {
         $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
         invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
@@ -1392,22 +1392,33 @@ function Add-HarnessUser {
         [string]
         $projectName
     )
-    $uri = "https://app.harness.io/ng/api/user/users?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&projectIdentifier=$projectName"
-    $body = @{
-        "emails"       = @(
-            $userEmail
-        )
-        "roleBindings" = @(
-            @{
-                "roleIdentifier"          = "_project_admin"
-                "roleName"                = "Project Admin"
-                "roleScopeLevel"          = "project"
-                "resourceGroupIdentifier" = "_all_project_level_resources"
-                "managedRole"             = $false
-            }
-        )
-    } | Convertto-Json
-    Invoke-RestMethod -Method 'POST' -uri $uri -body $body -headers $HarnessHeaders -ContentType "application/json" | out-null
+    # Check if user already exists
+    $userExists = Get-HarnessUser -e $userEmail
+    if ($userExists) {
+        Send-Update -t 1 -c "$userEmail already exists.  Skipping create."
+    }
+    else {
+        # Create user account
+        $uri = "https://app.harness.io/ng/api/user/users?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&projectIdentifier=$projectName"
+        $body = @{
+            "emails"       = @(
+                $userEmail
+            )
+            "roleBindings" = @(
+                @{
+                    "roleIdentifier"          = "_project_admin"
+                    "roleName"                = "Project Admin"
+                    "roleScopeLevel"          = "project"
+                    "resourceGroupIdentifier" = "_all_project_level_resources"
+                    "managedRole"             = $false
+                }
+            )
+        } | Convertto-Json
+        Invoke-RestMethod -Method 'POST' -uri $uri -body $body -headers $HarnessHeaders -ContentType "application/json" | out-null
+        # Make sure the stupid slow flag was active to automatically add user to 'active'
+        $pendingUser = Get-PendingUser -e $userEmail
+        
+    }
     $uri1 = "https://app.harness.io/ng/api/user/users?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body1 = @{
         "emails"       = @(
@@ -1451,6 +1462,32 @@ function Add-HarnessAdmin {
     } | Convertto-Json
     Invoke-RestMethod -Method 'POST' -uri $uri -body $body -headers $HarnessHeaders -ContentType "application/json" | out-null
     Send-Update -t 1 -c "Added $userEmail to account admin role."
+}
+function Get-PendingUser {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $email
+    )
+    $uri = "https://app.harness.io/ng/api/invites/aggregate?accountIdentifier=$($config.HarnessAccountId)"
+    $response = invoke-restmethod -uri $uri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
+    $userExists = $response.data.content | Where-Object { $_.email.Contains($email) }
+    if ($userExists) { return $userExists } else { return $false }
+
+}
+function Get-HarnessUser {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $email
+    )
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
+    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
+    
+    $userExists = $response.data.content | Where-Object { $_.email.Contains($email) }
+    if ($userExists) { return $userExists } else { return $false }
 }
 function Add-AttendeeRole {
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/roles"
@@ -1632,7 +1669,7 @@ function Add-OrgSecrets {
     }
 }
 function Clear-OrgSecrets {
-    # Load all secrets from administration secret manager
+    # Set all Harness provided secrets to value '123' to ensure nobody uses them going forward
     $orgSecrets = Send-Update -t 1 -c "Get secrets to clear" -r "gcloud secrets list --filter='name ~ org*' --project=$($config.AdminProjectId) --format='value(NAME)'"
     foreach ($secret in $orgSecrets) {
         $secretValue = "123"
@@ -1854,7 +1891,7 @@ function Add-Delegate {
             Send-Update -t 2 -c "Sorry... delegate did not load correctly."
             exit
         }
-        Start-sleep -s 2
+        Start-sleep -s 5
     }
     Send-Update -t 1 -c "$DelegatePrefix Delegate is connected and ready!"
 }
