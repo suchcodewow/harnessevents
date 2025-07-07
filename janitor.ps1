@@ -501,7 +501,6 @@ write-host $(gcloud auth activate-service-account --key-file=key.json)
 $maxProjectAge = 1
 $projects = Get-ProjectList
 Send-Update -t 1 -c "$($projects.count) total projects to check."
-Send-Update -t 1 -c "Projects to Review:`n$($projects.name)"
 foreach ($project in $projects) {
     Send-Update -t 1 -c "Reviewing project $($project.name)"
     $script:issueStart = "Google Project: $($project.name) [$project.projectId] "
@@ -517,7 +516,6 @@ foreach ($project in $projects) {
         Send-Update -t 1 -c "Project is over the limit of $maxProjectAge hour(s) old."
         Remove-GCP-Project -projectId $project.projectId
     }
-
     # Get cluster status
     # $clusterExists = Send-Update -t 1 -c "Check $($project.projectId) for kubernetes cluster" -r "gcloud container clusters list --project=$($project.projectId) --format=json " | Convertfrom-Json
     # if ($clusterExists.count -ge 2) {
