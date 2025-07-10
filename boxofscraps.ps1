@@ -657,19 +657,23 @@ function Save-EventDetails {
     $members = Get-GroupMembers | select-object -property role, email | sort-object -property role -Des
     $members | Add-Member -MemberType NoteProperty -Name "password" -Value ""
     $members | Add-Member -MemberType NoteProperty -Name "HarnessLink" -Value ""
+    # Create array of arrays suitable for dropping into googley sheet
+    $exportArray = @()
     foreach ($member in $members) {
         $cleanProject = ($member.email.split("@")[0] -replace '\W', '').tolower()
         if ($member.role -eq "MEMBER") {
             $member.role = "Attendee"
             $member.password = "Harness!"
             $member.HarnessLink = "https://app.harness.io/ng/account/$($config.HarnessAccountId)/module/cd/orgs/$($config.HarnessOrg)/projects/$($cleanProject)/pipelines"
+            $harnessLink = '=HYPERLINK("' + $($member.HarnessLink) + '","Project Link")'
+            $exportArray += ,@($member.role,$member.email, $member.password, $harnessLink)
         }
         else {
             $member.role = "Instructor"
+            $exportArray += ,@($member.role,$member.email)
         }
     }
-    $members | Format-Table
-    $members | Export-Csv "$($config.GoogleEventName).csv"
+    # If there's a google project, generate links for it too
     if ($config.GoogleProjectId) {
         $GoogleDetails = "`r`n"
         $GoogleDetails += "Google Kubernetes Overview,https://console.cloud.google.com/kubernetes/list/overview?project=$($config.GoogleProjectId)`r`n"
@@ -677,54 +681,63 @@ function Save-EventDetails {
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
     $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
-    Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
-    #     $token = gcloud auth application-default print-access-token --project=administration-459416
-
-    # $headers = @{
-    #     "Authorization"       = "Bearer $token"
-    #     "x-goog-user-project" = "administration-459416"
-    # }
-    # $uri = "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and name='HarnessEvents'"
-    # $response = invoke-restmethod -Method 'GET' -uri $uri -Headers $headers -ContentType "application/json"
-    # if ($response.files) {
-    #     write-host "Skipping creation"
-    #     $parentFolder = $response.files.id
-    # }
-    # else {
-    #     $bodyFolder = @{
-    #         "name"     = "HarnessEvents"
-    #         "mimeType" = "application/vnd.google-apps.folder"
-    #     } | ConvertTo-Json
-    #     $folder = invoke-restmethod -Method 'POST' -uri $uri -Headers $headers -body $bodyFolder -ContentType "application/json"
-    #     write-host "created folder"
-    #     $parentFolder = $folder.id
-    # }
-    # if (-not $parentFolder) { write-host "something went wrong, did not get a parent folder to use." }
-    # $bodyFile = @{
-    #     "name"     = "myevent"
-    #     "mimeType" = "application/vnd.google-apps.spreadsheet"
-    #     parents    = @(
-    #         $parentFolder
-    #     )
-    # } | ConvertTo-Json
-    # $responseSheets = invoke-restmethod -Method 'POST' -uri $uri -Headers $headers -body $bodyFile -ContentType "application/json"
-    # if (-not $responseSheets.id) {
-    #     write-host "something went wrong creating the spreadsheet"
-    #     exit
-    # }
-    # else {
-    #     $fileId = $responseSheets.id
-    #     write-host "created spreadsheet with id: $fileId"
-    # }
-
-    # $uriSheet = "https://sheets.googleapis.com/v4/spreadsheets/$fileId/values/A1?valueInputOption=USER_ENTERED"
-    # $bodySheet = @{
-    #     "values" = @(
-    #         ,@('hi','=HYPERLINK("google.com", "ciao")')
-    #     )
-    # } | ConvertTo-Json
-    # $bodySheet
-    # invoke-restmethod -Method 'PUT' -uri $uriSheet -Headers $headers -body $bodySheet -ContentType "application/json"
+    Get-GoogleAppToken
+    # Check if we have consent to write out a google worksheet
+    if (-not $config.GoogleAppToken) {
+        $members | Format-Table
+        $members | Export-Csv "$($config.GoogleEventName).csv"
+        Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
+        return
+    }
+    # Check if HarnessEvents folder already exists in current user's googley drive- create if needed
+    $uri = "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and name='HarnessEvents'"
+    $response = invoke-restmethod -Method 'GET' -uri $uri -Headers $appHeaders -ContentType "application/json"
+    if ($response.files) {
+        Send-Update -t 0 -c "HarnessEvents Google Drive folder already exists- skipping creation"
+        $parentFolder = $response.files.id
+    }
+    else {
+        $bodyFolder = @{
+            "name"     = "HarnessEvents"
+            "mimeType" = "application/vnd.google-apps.folder"
+        } | ConvertTo-Json
+        $folder = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFolder -ContentType "application/json"
+        Send-Update -t 0 -c "Created Google Drive folder: HarnessEvents"
+        $parentFolder = $folder.id
+    }
+    if (-not $parentFolder) {
+        Send-Update -t 2 -c "Failed to create or obtain HarnessEvents Google Folder- skipping google sheet create."
+        return
+    }
+    # We have a valid parent folder- use current event sheet or create new
+    $uriFileExists = "https://www.googleapis.com/drive/v3/files?q='$($parentFolder)' in parents and name='$($config.GoogleEventName)'"
+    $responseFileExists = invoke-restmethod -Method 'GET' -headers $appHeaders -uri $uriFileExists
+    if ($responseFileExists.files.id) {
+        $fileId = $responseFileExists.files.id
+        Send-Update -t 0 -c "Using existing event file id: $fileId"
+    }
+    else {
+        $bodyFile = @{
+            "name"     = $($config.GoogleEventName)
+            "mimeType" = "application/vnd.google-apps.spreadsheet"
+            parents    = @(
+                $parentFolder
+            )
+        } | ConvertTo-Json
+        $responseSheets = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFile -ContentType "application/json"
+        if (-not $responseSheets.id) {
+            Send-Update -t 2 -c "Failed to create $($config.GoogeEventName) Google Sheet"
+            return
+        }
+        else {
+            $fileId = $responseSheets.id
+        }
+    }
+    $uriSheet = "https://sheets.googleapis.com/v4/spreadsheets/$fileId/values/A1?valueInputOption=USER_ENTERED"
+    $bodySheet = @{
+        "values" = $exportArray
+    } | ConvertTo-Json
+    invoke-restmethod -Method 'PUT' -uri $uriSheet -Headers $appHeaders -body $bodySheet -ContentType "application/json" | Out-null
 
 }
 function Remove-Event {
@@ -812,6 +825,7 @@ function Get-ClassroomStatus {
     Add-Choice -k "AWSCONFIG" -d "Enable AWS classroom" -c "not enabled" -f New-AWSProject
 }
 function Sync-Event {
+    Get-GoogleAppToken
     Get-Events
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Please select a valid event"
@@ -949,6 +963,51 @@ function Get-GoogleAccessToken {
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
     # Cleanup due to GOogle's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
+}
+function Get-GoogleAppToken {
+    if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
+        # Check if token is over 50m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAppTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            $script:appHeaders = @{
+                "Authorization"       = "Bearer $($config.GoogleAppToken)"
+                "x-goog-user-project" = $($config.AdminProjectId)
+            }
+            Send-Update -t 0 -c "Google App Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google Workspace Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
+    }
+    else {
+        Send-Update -t 1 -c "Token or timestemp missing."
+    }
+    # Ask permission to prompt for login
+    Send-Update -t 1 -c "Is it cool if we connect to your Google Drive in order to write a lovely, prepopulated event sheet?"
+    Send-Update -t 1 -c "If so, you'll get a popup window next.  Authenticate with your work email, then close the browser tab and return here."
+    write-host
+    $consentNo = read-host -p "<enter> for yes, 'no' to stop"
+    if ($consentNo) {
+        Set-Prefs -k "GoogleAppToken" 
+        Set-Prefs -k "GoogleAppTokenTimestamp"
+        return
+    }
+    Send-Update -t 1 -c "Clearing application access token" -r "gcloud auth application-default revoke -q"
+    Send-Update -t 1 -c "Application access login" -r "gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets --project=$($config.AdminProjectId) -q"
+    $authorizationCode = gcloud auth application-default print-access-token
+    if ($authorizationCode) {
+        $script:appHeaders = @{
+            "Authorization"       = "Bearer $($config.GoogleAppToken)"
+            "x-goog-user-project" = $($config.AdminProjectId)
+        }
+        # Save valid token
+        Set-Prefs -k "GoogleAppToken" -v $authorizationCode
+        Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
+        # Save the name of the google account to use later
+        Send-Update -t 0 -c "Successfully retrieved a new application token and timestamp."
+
+    }
 }
 function Add-UserToGroup {
     param (
@@ -1116,6 +1175,7 @@ function Get-GroupMembers {
         [Parameter()]
         [switch] $splitIntoGroups # organize the results into owners/members and provided a count
     )
+    Get-GoogleAccessToken
     # Retrieve group key - or use cached default if none provided
     if ($groupEmail) {
         $groupKey = Get-GroupKey -g $groupEmail
@@ -2133,7 +2193,18 @@ function New-GCP-Project {
     New-GCP-Cluster
 }
 function Remove-GCP-Project {
-    # Delete project if it exists
+    # Check if project exists still
+    if (-not $config.GoogleProject) {
+        Send-Update -t 0 -c "No Google project name found. Skipping Delete."
+        return
+    }
+    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
+    if (-not $projectCheck) {
+        Send-Update -t 1 -c "Project already deleted"
+        Set-Prefs -k "GoogleProject"
+        Set-Prefs -k "GoogleProjectId"
+        return
+    }
     if ($config.GoogleProjectId) {
         Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $($config.GoogleProjectId) --quiet"
         $Counter = 0
@@ -2197,7 +2268,7 @@ while ($true) {
     Add-Choice -k "AWSCONFIG" -d "Enable/Disable AWS classroom" -c $config.UseAzureClassroom -f "Set-AWS-Project"
     Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $config.UserEventCount -f "Set-EventUsers" -t
     # Options to setup or remove choices
-    Add-Choice -k "GETDETAILS" -d "Save event details" -f "Sync-Event"
+    Add-Choice -k "GETDETAILS" -d "Sync/Update all event details" -f "Sync-Event"
     Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
     Get-Choice
 }
