@@ -678,6 +678,54 @@ function Save-EventDetails {
     }
     $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
     Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
+    #     $token = gcloud auth application-default print-access-token --project=administration-459416
+
+    # $headers = @{
+    #     "Authorization"       = "Bearer $token"
+    #     "x-goog-user-project" = "administration-459416"
+    # }
+    # $uri = "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and name='HarnessEvents'"
+    # $response = invoke-restmethod -Method 'GET' -uri $uri -Headers $headers -ContentType "application/json"
+    # if ($response.files) {
+    #     write-host "Skipping creation"
+    #     $parentFolder = $response.files.id
+    # }
+    # else {
+    #     $bodyFolder = @{
+    #         "name"     = "HarnessEvents"
+    #         "mimeType" = "application/vnd.google-apps.folder"
+    #     } | ConvertTo-Json
+    #     $folder = invoke-restmethod -Method 'POST' -uri $uri -Headers $headers -body $bodyFolder -ContentType "application/json"
+    #     write-host "created folder"
+    #     $parentFolder = $folder.id
+    # }
+    # if (-not $parentFolder) { write-host "something went wrong, did not get a parent folder to use." }
+    # $bodyFile = @{
+    #     "name"     = "myevent"
+    #     "mimeType" = "application/vnd.google-apps.spreadsheet"
+    #     parents    = @(
+    #         $parentFolder
+    #     )
+    # } | ConvertTo-Json
+    # $responseSheets = invoke-restmethod -Method 'POST' -uri $uri -Headers $headers -body $bodyFile -ContentType "application/json"
+    # if (-not $responseSheets.id) {
+    #     write-host "something went wrong creating the spreadsheet"
+    #     exit
+    # }
+    # else {
+    #     $fileId = $responseSheets.id
+    #     write-host "created spreadsheet with id: $fileId"
+    # }
+
+    # $uriSheet = "https://sheets.googleapis.com/v4/spreadsheets/$fileId/values/A1?valueInputOption=USER_ENTERED"
+    # $bodySheet = @{
+    #     "values" = @(
+    #         ,@('hi','=HYPERLINK("google.com", "ciao")')
+    #     )
+    # } | ConvertTo-Json
+    # $bodySheet
+    # invoke-restmethod -Method 'PUT' -uri $uriSheet -Headers $headers -body $bodySheet -ContentType "application/json"
+
 }
 function Remove-Event {
     # This does several things:
