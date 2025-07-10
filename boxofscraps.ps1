@@ -983,18 +983,23 @@ function Get-GoogleAppToken {
     else {
         Send-Update -t 1 -c "Token or timestemp missing."
     }
-    # Ask permission to prompt for login
-    # Send-Update -t 1 -c "Is it cool if we connect to your Google Drive in order to write a lovely, prepopulated event sheet?"
-    # Send-Update -t 1 -c "If so, you'll get a popup window next.  Authenticate with your work email, then close the browser tab and return here."
-    # write-host
-    # $consentNo = read-host -p "<enter> for yes, 'no' to stop"
-    # if ($consentNo) {
-    #     Set-Prefs -k "GoogleAppToken" 
-    #     Set-Prefs -k "GoogleAppTokenTimestamp"
-    #     return
-    # }
-    #Send-Update -t 1 -c "Clearing application access token" -r "gcloud auth application-default revoke -q"
-    #Send-Update -t 1 -c "Application access login" -r "gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets --project=$($config.AdminProjectId) -q"
+    if (test-path env:GOOGLE_CLOUD_SHELL) {
+        Send-Update -t 1 -c "Running Google Cloud Shell, using provided application credentials"
+    }
+    else {
+        #We're not in Google cloud shell, ask permission to login
+        Send-Update -t 1 -c "Is it cool if we connect to your Google Drive in order to write a lovely, prepopulated event sheet?"
+        Send-Update -t 1 -c "If so, you'll get a popup window next.  Authenticate with your work email, then close the browser tab and return here."
+        write-host
+        $consentNo = read-host -p "<enter> for yes, 'no' to stop"
+        if ($consentNo) {
+            Set-Prefs -k "GoogleAppToken" 
+            Set-Prefs -k "GoogleAppTokenTimestamp"
+            return
+        }
+        Send-Update -t 1 -c "Clearing application access token" -r "gcloud auth application-default revoke -q"
+        Send-Update -t 1 -c "Application access login" -r "gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets --project=$($config.AdminProjectId) -q"
+    }
     $authorizationCode = gcloud auth application-default print-access-token
     if ($authorizationCode) {
         $script:appHeaders = @{
