@@ -386,12 +386,15 @@ function Add-Choice() {
         [object] $parameters, # parameters needed in the function
         [switch] $todo # recommend this option if it's the first one with a blank current value
     )
-    Send-Update -c "Add choice: $key" -t 0
+    # Send-Update -c "Add choice: $key" -t 0
     # If this key exists, delete it and anything that followed
     $keyOption = $choices | Where-Object { $_.key -eq $key } | select-object -expandProperty Option -first 1
     if ($keyOption) {
         $staleOptions = $choices | Where-Object { $_.Option -ge $keyOption }
-        $staleOptions | foreach-object { Send-Update -c "Removing $($_.Option) $($_.key)" -t 0; $choices.remove($_) }
+        $staleOptions | foreach-object {
+            #Send-Update -c "Removing $($_.Option) $($_.key)" -t 0
+            $choices.remove($_)
+        }
     }
     # Add todo flag if switch used
     $todoIndicator = "<---recommended----"
@@ -655,10 +658,14 @@ function Set-Event {
 }
 function Save-EventDetails {
     $members = Get-GroupMembers | select-object -property role, email | sort-object -property role -Des
+    $attendeeCount = $members.count
     $members | Add-Member -MemberType NoteProperty -Name "password" -Value ""
     $members | Add-Member -MemberType NoteProperty -Name "HarnessLink" -Value ""
     # Create array of arrays suitable for dropping into googley sheet
     $exportArray = @()
+    $exportArray += ,@($config.GoogleEventName)
+    $exportArray += ,@(" ")
+    $exportArray += ,@("","    Class Email Address    ","  Class Password  ","  Direct Project Link  ","  Your Name  ","  Where are you from?  ","  Vacations-Hot or Cold?  ")
     foreach ($member in $members) {
         $cleanProject = ($member.email.split("@")[0] -replace '\W', '').tolower()
         if ($member.role -eq "MEMBER") {
@@ -675,19 +682,31 @@ function Save-EventDetails {
     }
     # If there's a google project, generate links for it too
     if ($config.GoogleProjectId) {
+        $exportArray += ,@(" ")
+        $exportArray += ,@("Event Google Project Links")
+        $googleKubernetesLink = '=HYPERLINK("https://console.cloud.google.com/kubernetes/list/overview?project=' + $config.GoogleProjectId + '","Kubernetes")'
+        $googleArtifactsLink = '=HYPERLINK("https://console.cloud.google.com/artifacts?project=' + $config.GoogleProjectId + '","Artifact Registry")'
+        $googleRunLink = '=HYPERLINK("https://console.cloud.google.com/run?project' + $config.GoogleProjectId + '","Cloud Run")'
+        $exportArray += ,@($googleKubernetesLink,$googleArtifactsLink,$googleRunLink)
         $GoogleDetails = "`r`n"
         $GoogleDetails += "Google Kubernetes Overview,https://console.cloud.google.com/kubernetes/list/overview?project=$($config.GoogleProjectId)`r`n"
         $GoogleDetails += "Google Artifact Registry,https://console.cloud.google.com/artifacts?project=$($config.GoogleProjectId)`r`n"
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
     $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
-    Get-GoogleAppToken
+    #Get-GoogleAppToken
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
         $members | Export-Csv "$($config.GoogleEventName).csv"
         Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
         return
+    }
+    else {
+        $script:appHeaders = @{
+            "Authorization"       = "Bearer $($config.GoogleAppToken)"
+            "x-goog-user-project" = $($config.AdminProjectId)
+        }
     }
     # Check if HarnessEvents folder already exists in current user's googley drive- create if needed
     $uri = "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and name='HarnessEvents'"
@@ -726,18 +745,97 @@ function Save-EventDetails {
         } | ConvertTo-Json
         $responseSheets = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFile -ContentType "application/json"
         if (-not $responseSheets.id) {
-            Send-Update -t 2 -c "Failed to create $($config.GoogeEventName) Google Sheet"
+            Send-Update -t 2 -c "Failed to create $($config.GoogleEventName) Google Sheet"
             return
         }
         else {
             $fileId = $responseSheets.id
         }
     }
+    # Clear data from spreadsheet
+    $uriClear = "https://sheets.googleapis.com/v4/spreadsheets/$($fileId)/values/A1:Z1000:clear"
+    invoke-restmethod -Method 'POST' -uri $uriClear -Headers $appHeaders | Out-Null
+    # Add Data to spreadsheet
     $uriSheet = "https://sheets.googleapis.com/v4/spreadsheets/$fileId/values/A1?valueInputOption=USER_ENTERED"
     $bodySheet = @{
         "values" = $exportArray
     } | ConvertTo-Json
     invoke-restmethod -Method 'PUT' -uri $uriSheet -Headers $appHeaders -body $bodySheet -ContentType "application/json" | Out-null
+    # Autosize Columns
+    $uriResize = "https://sheets.googleapis.com/v4/spreadsheets/$($fileId):batchUpdate"
+    $bodyResize = @{
+        "requests" = @(
+            ,@{
+                "repeatCell" = @{
+                    "range"  = @{
+                        "sheetId"       = 0
+                        "startRowIndex" = 2
+                        "endRowIndex"   = 3
+                    }
+                    "cell"   = @{
+                        "userEnteredFormat" = @{
+                            "backgroundColor"     = @{
+                                "red"   = 0.471
+                                "green" = 0.565
+                                "blue"  = 0.612
+                            }
+                            "horizontalAlignment" = "CENTER"
+                            "textFormat"          = @{
+                                "foregroundColor" = @{
+                                    "red"   = 1.0
+                                    "green" = 1.0
+                                    "blue"  = 1.0
+                                }
+                                "fontSize"        = 12
+                                "bold"            = $true
+                            }
+                        }
+                    }
+                    "fields" = "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment)"
+                }
+            }
+            ,@{
+                "repeatCell" = @{
+                    "range"  = @{
+                        "sheetId"          = 0
+                        "startRowIndex"    = 4 + $attendeeCount
+                        "endRowIndex"      = 5 + $attendeeCount
+                        "startColumnIndex" = 0
+                        "endColumnIndex"   = 1
+                    }
+                    "cell"   = @{
+                        "userEnteredFormat" = @{
+
+                            "textFormat" = @{
+                                "foregroundColor" = @{
+                                    "red"   = 1.0
+                                    "green" = 0.671
+                                    "blue"  = 0.251
+                                }
+                                "fontSize"        = 12
+                                "bold"            = $true
+                            }
+                        }
+                    }
+                    "fields" = "userEnteredFormat(textFormat,horizontalAlignment)"
+                }
+            }
+            ,@{
+                "autoResizeDimensions" = @{
+                    "dimensions" = @{
+                        "sheetId"    = 0
+                        "dimension"  = "COLUMNS"
+                        "startIndex" = 0
+                        "endIndex"   = 10
+                    }
+                }
+            }
+        )
+    } | ConvertTo-Json -Depth 20
+    invoke-restmethod -Method 'POST' -uri $uriResize -body $bodyResize -Headers $appHeaders -ContentType "application/json" | out-Null
+    Send-Update -t 1 -c "-------------------------------------------------------"
+    Send-Update -t 1 -c "Your even has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
+    Send-Update -t 1 -c "Or open your Google Drive and navigate to: <your drive>/HarnessEvents/$($config.GoogleEventName)"
 
 }
 function Remove-Event {
@@ -981,7 +1079,7 @@ function Get-GoogleAppToken {
         }
     }
     else {
-        Send-Update -t 1 -c "Token or timestemp missing."
+        Send-Update -t 1 -c "New token needed"
     }
     if (test-path env:GOOGLE_CLOUD_SHELL) {
         Send-Update -t 1 -c "Running Google Cloud Shell, using provided application credentials"
@@ -1011,7 +1109,6 @@ function Get-GoogleAppToken {
         Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
         # Save the name of the google account to use later
         Send-Update -t 0 -c "Successfully retrieved a new application token and timestamp."
-
     }
 }
 function Add-UserToGroup {
