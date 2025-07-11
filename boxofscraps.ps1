@@ -1906,7 +1906,7 @@ function Add-OrgSecrets {
     }
 }
 function Clear-OrgSecrets {
-    # Set all Harness provided secrets to value '123' to ensure nobody uses them going forward
+    # Set all Harness provided secrets to '123' after event
     $orgSecrets = Send-Update -t 1 -c "Get secrets to clear" -r "gcloud secrets list --filter='name ~ org*' --project=$($config.AdminProjectId) --format='value(NAME)'"
     foreach ($secret in $orgSecrets) {
         $secretValue = "123"
@@ -1932,22 +1932,30 @@ function Clear-OrgSecrets {
             }
         } | Convertto-Json
         $uri = "https://app.harness.io/ng/api/v2/secrets/$($secretID)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
+        #https://app.harness.io/ng/api/v2/secrets/ { identifier }?accountIdentifier=string&orgIdentifier=string&projectIdentifier=string'
         Send-Update -t 1 -c "Clearing secret: $secretID"
         Try {
 
-            Invoke-RestMethod -uri $uri -Method 'POST' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
+            Invoke-RestMethod -uri $uri -Method 'PUT' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
         }
         Catch {
-            $errorResponse = $_ | Convertfrom-Json
-            if ($errorResponse.message.contains("already exists")) {
-                Send-Update -t 0 -c "Secret: $secretID already exists."
+            Send-Update -t 2 -c "general failure! uri was: $uri"
+            Send-Update -t 2 -c "Body was $body"
+            Send-Update -t 2 -c "Error was $_"
+            if ($_.message.substring(0,1) -eq "{") {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("already exists")) {
+                    Send-Update -t 0 -c "Secret: $secretID already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to clear secret: $secretID  with error: $errorResponse.message"
+                    Send-Update -t 2 -c "Uri was: $uri"
+                    Send-Update -t 2 -c "Body was: $body"
+                    #exit
+                }
             }
-            else {
-                Send-Update -t 2 -c "Failed to clear secret: $secretID  with error: $errorResponse.message"
-                Send-Update -t 2 -c "Uri was: $uri"
-                Send-Update -t 2 -c "Body was: $body"
-                #exit
-            }   
+
+        
         }
     }
 }
@@ -2057,7 +2065,7 @@ function Add-OrgTemplates {
                     Send-Update -t 0 -c "Template: $templateId already exists."
                 }
                 else {
-                    Send-Update -t 2 -c "Failed to create template: $templateId  with error: $errorResponse.message"
+                    Send-Update -t 2 -c "Failed to create template: $templateId with error: $errorResponse.message"
                 }  
             }
             else {
@@ -2088,7 +2096,7 @@ function Get-DelegateConfig {
         catch {
             $errorResponse = $_ | Convertfrom-Json
             if ($errorResponse.message.contains("Delegate with same name exists.")) {
-                Send-Update -t 1 -c "$delegateName exists but is not connected.  Attempting a blind delete due to yet another Harness API defect."
+                Send-Update -t 1 -c "$delegateName exists but is not connected. Attempting a blind delete due to yet another Harness API defect."
                 $deleteUri = "https://app.harness.io/ng/api/delegate-setup/delegate/$("_$delegateName")?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
                 #this worked once: 'https://app.harness.io/ng/api/delegate-setup/delegate/_gcp_delegate_event_nationwide?accountIdentifier=4jTfP5f9QNWImqbtdGEG1g&orgIdentifier=event_nationwide&projectIdentifier=string'
                 Invoke-RestMethod -Method 'DEL' -uri $deleteUri -Headers $HarnessHeaders -body $body
@@ -2140,7 +2148,7 @@ function Add-Delegate {
     $delegateStatus = Get-DelegateStatus
     $delegateAvailable = $delegateStatus | where-object { $_.name -eq $delegateName }
     if ($delegateAvailable) {
-        Send-Update -t 1 -c "$delegateName already exists and is connected.  Skipping creation."
+        Send-Update -t 1 -c "$delegateName already exists and is connected. Skipping creation."
         return
     }
     # Check for disconnected delegate by tag lookup
@@ -2150,7 +2158,12 @@ function Add-Delegate {
             $delegateName
         )
     } | Convertto-Json
-    $response = Invoke-RestMethod -method 'POST' -uri $uriTags -headers $HarnessHeaders -body $bodyTags -ContentType 'application/json'
+    try {
+        $response = Invoke-RestMethod -method 'POST' -uri $uriTags -headers $HarnessHeaders -body $bodyTags -ContentType 'application/json'
+    }
+    catch {
+        Send-udpate -t 0 -c "no delegate exists."
+    }
     if ($response.resource) {
         Send-Update -t 1 -c "Deleting disconnected/old delegate by id: $($response.resource.identifier)"
         Remove-Delegate -delegateId $response.resource.identifier
