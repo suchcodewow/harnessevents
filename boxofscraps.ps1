@@ -840,10 +840,12 @@ function Save-EventDetails {
 }
 function Remove-Event {
     # This does several things:
+    # It will delete any existing classrooms
     # It will wipe all event users from the Harness account as well as all google accounts
     # It will delete the event email (completely eliminating the event)
+    # It will set all known secrets to a value of 123
     # It will set the "go forward" feature flags as shown in featureflagend.json
-    # It will delete any existing classrooms
+
     Remove-GCP-Project
     $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
     If ($confirm -ne "y") {
