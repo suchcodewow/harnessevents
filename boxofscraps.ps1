@@ -2115,7 +2115,6 @@ function Get-DelegateConfig {
 function Get-DelegateStatus {
     [CmdletBinding()]
     $uri = "https://app.harness.io/ng/api/delegate-setup/listDelegates?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&all=true"
-    # https://app.harness.io/gateway/api/setup/delegates/ng/v2?accountId=4jTfP5f9QNWImqbtdGEG1g&orgId=event_nationwide&pageIndex=0&pageSize=10&sortOrders=status%2CDESC
     $body = @{
         "status"     = "CONNECTED"
         "filterType" = "Delegate"
@@ -2143,6 +2142,7 @@ function Add-Delegate {
         [string]
         $delegatePrefix #expecting gcp/az/aws
     )
+    $delegateName = $delegatePrefix + "-delegate-" + $($config.HarnessOrg.replace("_","-"))
     #Check if there was an existing delegate
     Send-Update -t 1 -c "Checking for existing delegate"
     $delegateStatus = Get-DelegateStatus
