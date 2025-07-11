@@ -684,6 +684,8 @@ function Remove-Event {
     # It will wipe all event users from the Harness account as well as all google accounts
     # It will delete the event email (completely eliminating the event)
     # It will set the "go forward" feature flags as shown in featureflagend.json
+    # It will delete any existing classrooms
+    Remove-GCP-Project
     $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
     If ($confirm -ne "y") {
         return
@@ -744,9 +746,7 @@ function Remove-Event {
     Set-Prefs -k "UseGoogleClassroom"
     Set-Prefs -k "UseAzureClassroom"
     Set-Prefs -k "UseAWSClassroom"
-    Set-Prefs -k "HarnessOrg"
-    Set-Prefs -k "GoogleProject"
-    Set-Prefs -k "GoogleProjectId"       
+    Set-Prefs -k "HarnessOrg"     
     Get-Events
 }
 function Get-ClassroomStatus {
@@ -908,6 +908,55 @@ function Get-GoogleAccessToken {
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
     # Cleanup due to GOogle's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
+}
+function Get-GoogleAppToken {
+    if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
+        # Check if token is over 50m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAppTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            $script:appHeaders = @{
+                "Authorization"       = "Bearer $($config.GoogleAppToken)"
+                "x-goog-user-project" = $($config.AdminProjectId)
+            }
+            Send-Update -t 0 -c "Google App Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google App Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
+    }
+    else {
+        Send-Update -t 1 -c "New token needed"
+    }
+    if (test-path env:GOOGLE_CLOUD_SHELL) {
+        Send-Update -t 1 -c "Running Google Cloud Shell, using provided application credentials"
+    }
+    else {
+        #We're not in Google cloud shell, ask permission to login
+        Send-Update -t 1 -c "Is it cool if we connect to your Google Drive in order to write a lovely, prepopulated event sheet?"
+        Send-Update -t 1 -c "If so, you'll get a popup window next.  Authenticate with your work email, then close the browser tab and return here."
+        write-host
+        $consentNo = read-host -p "<enter> for yes, 'no' to stop"
+        if ($consentNo) {
+            Set-Prefs -k "GoogleAppToken" 
+            Set-Prefs -k "GoogleAppTokenTimestamp"
+            return
+        }
+        Send-Update -t 1 -c "Clearing application access token" -r "gcloud auth application-default revoke -q"
+        Send-Update -t 1 -c "Application access login" -r "gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/spreadsheets --project=$($config.AdminProjectId) -q"
+    }
+    $authorizationCode = gcloud auth application-default print-access-token
+    if ($authorizationCode) {
+        $script:appHeaders = @{
+            "Authorization"       = "Bearer $($config.GoogleAppToken)"
+            "x-goog-user-project" = $($config.AdminProjectId)
+        }
+        # Save valid token
+        Set-Prefs -k "GoogleAppToken" -v $authorizationCode
+        Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
+        # Save the name of the google account to use later
+        Send-Update -t 0 -c "Successfully retrieved a new application token and timestamp."
+    }
 }
 function Add-UserToGroup {
     param (
@@ -1834,9 +1883,29 @@ function Add-Delegate {
     #Check if there was an existing delegate
     Send-Update -t 1 -c "Checking for existing delegate"
     $delegateStatus = Get-DelegateStatus
-    Send-Update -t 0 -c "Current delegates found: $delegateStatus |"
-    #$pretestDelegate = Invoke-RestMethod -method 'POST' -uri $uri -headers $HarnessHeaders -body $body -ContentType 'application/json'
-    $delegateName = $delegatePrefix + "-delegate-" + $($config.HarnessOrg.replace("_","-"))
+    $delegateAvailable = $delegateStatus | where-object { $_.name -eq $delegateName }
+    if ($delegateAvailable) {
+        Send-Update -t 1 -c "$delegateName already exists and is connected. Skipping creation."
+        return
+    }
+    # Check for disconnected delegate by tag lookup
+    $uriTags = "https://app.harness.io/ng/api/delegate-group-tags/delegate-groups?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $bodyTags = @{
+        "tags" = @(
+            $delegateName
+        )
+    } | Convertto-Json
+    try {
+        $response = Invoke-RestMethod -method 'POST' -uri $uriTags -headers $HarnessHeaders -body $bodyTags -ContentType 'application/json'
+    }
+    catch {
+        Send-update -t 0 -c "no delegate exists."
+    }
+    if ($response.resource) {
+        Send-Update -t 1 -c "Deleting disconnected/old delegate by id: $($response.resource.identifier)"
+        Remove-Delegate -delegateId $response.resource.identifier
+    }
+    Send-Update -t 0 -c "Current delegate found: $delegateStatus"
     if ($delegateStatus -and $delegateStatus.name.contains($delegateName)) {
         #Remove-Delegate -delegatePrefix $delegatePrefix
         Send-Update -t 1 -c "Delegate: $delegateName already exists. Skipping create."
