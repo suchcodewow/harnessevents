@@ -697,7 +697,6 @@ function Save-EventDetails {
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
     $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
-    #Get-GoogleAppToken
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
