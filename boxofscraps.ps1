@@ -9,7 +9,7 @@ param (
 
 # Core Functions
 function Get-UserName {
-    # Generate a new username
+    # Generate a fun PG-rated madlibs-style username
     $Prefix = @(
         "abundant",
         "delightful",
@@ -964,8 +964,6 @@ function Sync-Event {
     }
     Save-EventDetails
 }
-
-# Google-Specific Event Functions
 function Get-GoogleLogin {
     # Use @harness.io email if already logged in
     $myGoogleAccount = Send-Update -t 1 -c "Retrieving local accounts" -r "gcloud auth list --filter=account:'harness.io' --format='value(account)'"
@@ -1011,9 +1009,7 @@ function Get-GoogleAccessToken {
         $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
         if ($TimeDiff.TotalMinutes -lt 30) {
             Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
-            $script:headers = @{
-                "Authorization" = "Bearer $($config.GoogleAccessToken)"
-            }
+            $script:headers = @{ "Authorization" = "Bearer $($config.GoogleAccessToken)" }
             return
         }
         else {
@@ -1581,6 +1577,7 @@ function Add-Project {
     }
 }
 function Get-Projects {
+    # Get a list of projects from Harness
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/projects&limit=50&sort=name&order=ASC"
     $response = Invoke-RestMethod -method 'GET' -uri $uri -headers $HarnessHeaders
     return $response
