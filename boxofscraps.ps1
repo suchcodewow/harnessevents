@@ -580,7 +580,6 @@ function Set-EventUsers {
     Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Get-Events {
-
     # Check token status/refresh
     Get-GoogleAccessToken
     # Create an instructor email account if needed
@@ -616,6 +615,12 @@ function Get-Events {
         Set-Prefs -k "GoogleEventId" -v $eventDefault.id
         Set-Prefs -k "GoogleEventEmail" -v $eventDefault.email
         Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
+    }
+    else {
+        Set-Prefs -k "GoogleEventName" 
+        Set-Prefs -k "GoogleEventId"
+        Set-Prefs -k "GoogleEventEmail"
+        Set-Prefs -k "HarnessOrg" 
     }
 }
 function Set-Event {
@@ -1276,7 +1281,7 @@ function Get-GroupMembers {
         [Parameter()]
         [string] $groupEmail,
         [Parameter()]
-        [switch] $splitIntoGroups # organize the results into owners/members and provided a count
+        [switch] $splitIntoGroups # organize the results into owners/members and provide a count
     )
     Get-GoogleAccessToken
     # Retrieve group key - or use cached default if none provided
@@ -1326,6 +1331,7 @@ function Get-GroupKey {
 function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
     # It will enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
+    # It will add filters listed at gs://harnesseventsdata/config/filters.json
     # Then enable google-auth in oauth settings and create an attendee role
     # It will load all secrets starting with 'org' from google secret manager
     # It will load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
@@ -1344,6 +1350,14 @@ function Add-HarnessEventDetails {
         Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
         Start-Sleep -s 2
     } until (-not $flagsNeeded)
+    # Add filters to make it easier to find stuff
+    $filters = gcloud storage cat gs://harnesseventsdata/config/filters.json | Convertfrom-Json
+    foreach ($filterObject in $filters.psobject.Properties.name) {
+        foreach ($filter in $filters.$filterObject) {
+            #write-host "type $filterObject name $filter"
+            Add-Filter -filterType $filterObject -name $filter
+        }
+    }
     #Enable Google Auth for attendee access & Org level bits
     Enable-GoogleAuth
     Add-Organization
@@ -1998,38 +2012,78 @@ function Add-SecretJson {
     Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
 }
 function Add-OrgTemplates {
+    # This is currently a bit complex.  There are several yaml types in Harness that use aaaalllllmost the same
+    # api structure.  Right now this function is identifying the type from the first line of yaml and then handling
+    # multiple scenarios.
     $OrgTemplates = gcloud storage ls gs://harnesseventsdata/OrgTemplates/*.yaml
     foreach ($yaml in $OrgTemplates) {
         $modifiedTemplate = ""
         $templateId = (split-path $yaml -Leaf).split(".")[0]
         $templateName = $templateId.Replace("_"," ")
         $template = gcloud storage cat $yaml
-        foreach ($line in $template) {
-            $addThisLine = $true
-            switch ($line.trim()) {
-                "template:" {
-                    $modifiedTemplate += "$line`r`n"
-                    $modifiedTemplate += "  name: $templateName`r`n"
-                    $modifiedTemplate += "  identifier: $templateId`r`n"
-                    $modifiedTemplate += "  versionLabel: ""1""`r`n"
-                    $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
-                    $addThisLine = $false
-                    $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&"
-                    $contentType = "application/json"
-                    $templateType = "template"
-                }
-                "connector:" { 
-                    $modifiedTemplate += "$line`r`n"
-                    $modifiedTemplate += "  name: $templateName`r`n"
-                    $modifiedTemplate += "  identifier: $templateId`r`n"
-                    $modifiedTemplate += "  versionLabel: ""1""`r`n"
-                    $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
-                    $addThisLine = $false
-                    $uri = "https://app.harness.io/gateway/ng/api/connectors?"
-                    $contentType = "text/yaml"
-                    $templateType = "connector"
-                }
+        # There are multiple endpoints for essentially the same yaml.  Identify the type when it appears in the yaml
+        # then setup the API requirements that team thought would be fun the day they designed their endpoint in a vacuum.
+        $templateFirstLine = $template[0].trim()
+        switch ($templateFirstLine) {
+            "template:" {
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                $modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "application/json"
+                $templateType = "template"
             }
+            "connector:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                $modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/connectors?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "text/yaml"
+                $templateType = "connector"
+            }
+            "service:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/servicesV2?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "application/json"
+                $templateType = "service"
+            }
+            "environment:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/environmentsV2?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "application/json"
+                $templateType = "environment"
+            }
+            "infrastructureDefinition:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/infrastructures?accountIdentifier=$($config.HarnessAccountId)"
+                $contentType = "application/json;charset=utf-8"
+                $templateType = "infrastructureDefinition"
+            }
+            default {
+                Send-Update -t 0 -c "Unknown template type $templateId with first line of $templateFirstLine"
+                break
+            }
+        }
+        # Load all remaining lines except the ones updated above.
+        foreach ($line in $template | Select-Object -skip 1) {
+            $addThisLine = $true
+            # Ignore any of these situations- it was already set above
             if ($line.length -ge 7 -and $line.substring(0,7) -eq "  name:") {
                 $addThisLine = $false
             }
@@ -2046,18 +2100,41 @@ function Add-OrgTemplates {
                 $modifiedTemplate += "$line`r`n"
             }
         }
-        if (-not $uri) {
-            write-host "$yaml isn't a supported type (template: or connector:)"
-        }
-        else {
-            $uri += "accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-        }
         $templateheaders = @{
             'x-api-key' = $config.HarnessPAT
         }
+        # It's insane, but some API calls require duplicating values both in yaml and in body (????).. 
+        # so add more duplicate unecessary logic... and then have a little cry.
+        switch ($templateFirstLine) {
+            "service:" {
+                $body = @{
+                    "name"          = $templateName
+                    "identifier"    = $templateId
+                    "orgIdentifier" = $config.HarnessOrg
+                    "yaml"          = $modifiedTemplate
+                } | Convertto-Json
+            }
+            "environment:" {
+                $body = @{
+                    "name"          = $templateName
+                    "identifier"    = $templateId
+                    "orgIdentifier" = $config.HarnessOrg
+                    "type"          = "Production"
+                    "yaml"          = $modifiedTemplate
+                } | Convertto-Json
+            }
+            "infrastructureDefinition:" {
+                $body = @{
+                    "yaml" = $modifiedTemplate
+                } | ConvertTo-Json
+            }
+            default {
+                $body = $modifiedTemplate
+            }
+        }
         Try {
             Send-Update -t 1 -c "Adding/Updating org $($templateType): $templateId"
-            Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType | Out-null
+            Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $templateheaders -ContentType $contentType | Out-null
         }
         Catch {
             # Generates a System.Management.Automation.ErrorRecord
@@ -2068,17 +2145,67 @@ function Add-OrgTemplates {
                 }
                 else {
                     Send-Update -t 2 -c "Failed to create template: $templateId with error: $errorResponse.message"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "template yaml:"
+                    Send-Update -t 0 -c $body
                 }  
             }
             else {
                 Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
-                Send-Update -t 2 -c "URI: $uri"
-                Send-Update -t 2 -c "ContentType: $contentType"
-                Send-Update -t 2 -c "Headers: $($templateheaders | Select-Object -Property *)"
-                Send-Update -t 2 -c "template yaml: $modifiedTemplate" 
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
             }
         }
     }
+}
+function Add-Filter {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $filterType, #Connector, Template, Secret known so far (api reference is blank- fun!)
+        [string]
+        $name
+    )
+    $uri = "https://app.harness.io/template/api/filters?accountIdentifier=$($config.HarnessAccountId)&orgidentifier=$($config.HarnessOrg)"
+    $body = @{
+        "name"             = $name
+        "identifier"       = $name
+        "orgIdentifier"    = $config.HarnessOrg
+        "filterVisibility" = "EveryOne"
+        "filterProperties" = @{
+            "filterType" = $filterType
+            "tags"       = @{
+                $name = ""
+            }
+        }
+
+    } | ConvertTo-Json
+    Try {
+        Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $HarnessHeaders -ContentType "application/json" | Out-null
+    }
+    Catch {
+        $errorResponse = $_ | Convertfrom-Json
+        if ($errorResponse.code -eq "DUPLICATE_FIELD") {
+            Send-Update -t 1 -c "Filter $name already exists in org $($config.HarnessOrg)."
+        }
+        else {
+            Send-Update -t -2 -c "uri attempted was: $uri"
+            Send-Update -t -2 -c "body was: $body"
+            Send-Update -t 2 -c "Failed to create filter with error: $errorResponse"
+            exit
+        }  
+    }
+}
+function Get-Filters {
+    # currently unused because you have to 
+    $uri = "https://app.harness.io/ccm/api/filters?pageIndex=0&pageSize=100&accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&type=Connector"
+    Invoke-RestMethod -uri $uri -headers $HarnessHeaders -method 'GET'
 }
 function Get-DelegateConfig {
     [CmdletBinding()]
@@ -2203,7 +2330,6 @@ function Get-FeatureFlagStatus {
     $currentFlags = [pscustomobject]@{}
     foreach ($item in $response.features) {
         $value = $item.envProperties.variationMap | Where-Object { $_.targets.identifier -eq $($config.HarnessAccountId) } | select-object -expandproperty variation
-        #write-host "$($item.identifier):$value"
         $currentFlags | Add-Member -MemberType NoteProperty -name $item.identifier -value $value -Force
     }
     return $currentFlags
