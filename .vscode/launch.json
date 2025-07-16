@@ -9,14 +9,21 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-v"]
+      "args": ["-v", "-c"]
     },
     {
       "name": "Normal",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": []
+      "args": ["-c"]
+    },
+    {
+      "name": "Verbose+Sales Override",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-v", "-c", "-g sales-209522"]
     }
   ]
 }

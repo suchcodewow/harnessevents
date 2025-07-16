@@ -2,13 +2,14 @@
 param (
     [switch] $help, # show other command options and exit
     [switch] $verbose, # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
-    [switch] $cloudCommands, # FORCED ON!! enable to show commands
-    [switch] $logReset # enable to reset log between runs
+    [switch] $cloudCommands, # enable to show commands
+    [switch] $logReset, # enable to reset log between runs
+    [string] $googleCloudProjectOverride
 )
 
 # Core Functions
 function Get-UserName {
-    # Generate a new username
+    # Generate a fun PG-rated madlibs-style username
     $Prefix = @(
         "abundant",
         "delightful",
@@ -271,12 +272,13 @@ function Get-Prefs($scriptPath) {
     # Do the things for the command line switches selected
     if ($help) { Get-Help }
     if ($verbose) { $script:outputLevel = 0 } else { $script:outputLevel = 1 }
-    if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $true }
+    if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $false }
     if ($logReset) { $script:retainLog = $false } else { $script:retainLog = $true }
     if ($aws) { $script:useAWS = $true }
     if ($azure -eq $true) { $script:useAzure = $true }
     if ($gcp) { $script:useGCP = $true }
     if ($multiUserMode) { $script:multiUserMode = $true }
+    if ($googleCloudProjectOverride) { $script:googleCloudProjectOverride }
     # If no cloud selected, use all
     if ((-not $useAWS) -and (-not $useAzure) -and (-not $useGCP)) { $script:useAWS = $true; $script:useAzure = $true; $script:useGCP = $true }
     # Set Script level variables and housekeeping stuffs
@@ -523,7 +525,10 @@ function Add-EventUsers {
     $startingCount = (Get-GroupMembers -s).memberCount
     $usersNeeded = $config.UserEventCount - $startingCount
     Send-Update -t 1 -c "Group has $startingCount now with goal of $($config.UserEventCount)"
-    # Loop to add users
+    # Loop to add users if needed
+    if ($startingCount -ge $config.UserEventCount) {
+        return
+    }
     while ($counter -le $usersNeeded) {
         $newUser = $false
         While (-not $newUser) {
@@ -556,9 +561,7 @@ function Add-EventUsers {
         }
     }
     Send-Update -t 1 -c "All users added successfully"
-    # if (-not $preset) {
-    #     Get-Events
-    # }
+
 }
 function Set-EventUsers {
     while (-not $usersToAdd) {
@@ -694,7 +697,6 @@ function Save-EventDetails {
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
     $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
-    #Get-GoogleAppToken
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
@@ -962,8 +964,6 @@ function Sync-Event {
     }
     Save-EventDetails
 }
-
-# Google-Specific Event Functions
 function Get-GoogleLogin {
     # Use @harness.io email if already logged in
     $myGoogleAccount = Send-Update -t 1 -c "Retrieving local accounts" -r "gcloud auth list --filter=account:'harness.io' --format='value(account)'"
@@ -1009,9 +1009,7 @@ function Get-GoogleAccessToken {
         $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
         if ($TimeDiff.TotalMinutes -lt 30) {
             Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
-            $script:headers = @{
-                "Authorization" = "Bearer $($config.GoogleAccessToken)"
-            }
+            $script:headers = @{ "Authorization" = "Bearer $($config.GoogleAccessToken)" }
             return
         }
         else {
@@ -1579,6 +1577,7 @@ function Add-Project {
     }
 }
 function Get-Projects {
+    # Get a list of projects from Harness
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/projects&limit=50&sort=name&order=ASC"
     $response = Invoke-RestMethod -method 'GET' -uri $uri -headers $HarnessHeaders
     return $response
@@ -2090,6 +2089,9 @@ function Get-DelegateConfig {
     $uri = "https://app.harness.io/ng/api/download-delegates/kubernetes?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $body = @{
         "name" = $delegateName
+        "tags" = @(
+            $delegateName.substring(0,3)
+        )
     } | ConvertTo-Json
     do {
         try {
@@ -2177,7 +2179,7 @@ function Add-Delegate {
         return
     }
     Send-Update -t 1 -c "Get $delegateName Delegate Config" -r "Get-DelegateConfig -d $delegateName"
-    Send-Update -t 1 -c "Apply $delegateName delegate yaml" -r "kubectl apply -f $delegateName.yaml"
+    Send-Update -t 1 -o -c "Apply $delegateName delegate yaml" -r "kubectl apply -f $delegateName.yaml"
     if (test-path -Path "$delegateName.yaml") { Remove-Item "$delegateName.yaml" }
     $counter = 0
     Do {
@@ -2255,9 +2257,20 @@ function Set-AWS-Project {
     SEnd-Update -t 1 -c "AWS isn't available yet"
 }
 function New-GCP-Project {
-    # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
-    Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
-    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
+    if ($googleCloudProjectOverride) {
+        Set-Prefs -k "GoogleProjectId" -v $googleCloudProjectOverride
+        Set-Prefs -k "GoogleProject" -v "Command Line Override"
+        $projectCheck = Send-Update -t 1 -c "Check Project Override availability" -r "gcloud projects list --filter='id:$($config.GoogleProjectId)' --format=json" | convertfrom-json
+    }
+    else {
+        # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
+        Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
+        $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
+    }
+    if ($googleCloudProjectOverride -and -not $projectCheck) {
+        Send-Update -t 2 -c "Google project override used but $googleCloudProjectOverride doesn't exist. BYIIEEEEE."
+        exit
+    }
     if ($projectCheck) {
         # Project already exists- skip creation
         Send-Update -t 1 -c "Project already exists- skipping creation."
@@ -2344,23 +2357,23 @@ function Remove-GCP-Project {
 }
 function New-GCP-Cluster {
     # Check if kubernetes cluster exists
-    $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter='name=harnessevent' --format=json  --verbosity=error" | Convertfrom-Json
+    if ($googleCloudProjectOverride) {
+        # We're building this cluster in a potentially shared space- use the current user as an indentifier
+        $cleanIdentifier = "-$($config.GoogleUser.split('@')[0].replace('.',''))"
+    }
+    $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter=name=harnessevent$($cleanIdentifier) --format=json  --verbosity=error --project=$($config.GoogleProjectId)" | Convertfrom-Json
     if (-not $clusterExists) {
-        $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)' --verbosity=error"
-        Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes cloud-platform"
-        Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent --zone=$clusterRegion"  
+        $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)' --verbosity=error --project=$($config.GoogleProjectId)"
+        Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent$cleanIdentifier -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes cloud-platform  --project=$($config.GoogleProjectid)"
+        Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent$cleanIdentifier --zone=$clusterRegion  --project=$($config.GoogleProjectId)"  
+        $clusterExists = Send-Update -t 1 -c "Confirm cluster exists" -r "gcloud container clusters list --filter=name=harnessevent$($cleanIdentifier) --format=json --project=$($config.GoogleProjectId)" | Convertfrom-Json
+        if (-not $clusterExists) {
+            Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHYYYYYY GOOGLE?"
+            exit
+        }
     }
-    else {
-        Send-Update -t 1 -c "Harness GCP Cluster already exists.  Skipping creation."
-    }
-    $clusterExists = Send-Update -t 1 -c "Confirm cluster exists" -r "gcloud container clusters list --filter='name=harnessevent' --format=json " | Convertfrom-Json
-    if (-not $clusterExists) {
-        Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHYYYYYY GOOGLE?"
-        exit
-    }
-    else {
-        Add-Delegate -delegatePrefix "gcp"
-    }
+    Add-Delegate -delegatePrefix "gcp"
+    
 }
 function New-AZResourceGroup {
     ##TODO Azure Resource Group Functions
