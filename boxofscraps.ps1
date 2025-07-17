@@ -2172,22 +2172,52 @@ function Add-Filter {
         [string]
         $name
     )
-    $uri = "https://app.harness.io/template/api/filters?accountIdentifier=$($config.HarnessAccountId)&orgidentifier=$($config.HarnessOrg)"
+    # Need to use a combination of documented and undocumented API's here.  It's ok though.  I'm all cried out at this point.
+    # The API can't hurt me any more.
+    Switch ($filterType) {
+        "Connector" {
+            $uri = "https://app.harness.io/ng/api/filters?accountIdentifier=$($config.HarnessAccountId)"
+        }
+        "Template" {
+            $uri = "https://app.harness.io/template/api/filters?accountIdentifier=$($config.HarnessAccountId)"
+        }
+        default {
+            Send-Update -t 0 -c "$filterType is unsupported. Can't add $name"
+        }
+    }
     $body = @{
         "name"             = $name
         "identifier"       = $name
         "orgIdentifier"    = $config.HarnessOrg
         "filterVisibility" = "EveryOne"
         "filterProperties" = @{
-            "filterType" = $filterType
-            "tags"       = @{
+            "connectorNames"       = @()
+            "connectorIdentifiers" = @()
+            "filterType"           = $filterType
+            "tags"                 = @{
                 $name = ""
             }
         }
-
-    } | ConvertTo-Json
+    } | ConvertTo-Json -Depth 5
+    $body1 = @{
+        filterVisibility = "EveryOne"
+        identifier       = "gcp"
+        orgIdentifier    = "event_builder"
+        name             = "gcp"
+        filterProperties = @{
+            tags                 = @{
+                gcp = ""
+            }
+            connectorNames       = @()
+            connectorIdentifiers = @()
+            filterType           = "Template"
+        }
+    } | ConvertTo-Json -Depth 5
+    $templateheaders = @{
+        'x-api-key' = $config.HarnessPAT
+    }
     Try {
-        Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $HarnessHeaders -ContentType "application/json" | Out-null
+        Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $templateheaders -ContentType "application/json" | Out-null
     }
     Catch {
         $errorResponse = $_ | Convertfrom-Json
@@ -2195,9 +2225,10 @@ function Add-Filter {
             Send-Update -t 1 -c "Filter $name already exists in org $($config.HarnessOrg)."
         }
         else {
-            Send-Update -t -2 -c "uri attempted was: $uri"
-            Send-Update -t -2 -c "body was: $body"
+            Send-Update -t 2 -c "uri attempted was: $uri"
+            Send-Update -t 2 -c "body was: $body"
             Send-Update -t 2 -c "Failed to create filter with error: $errorResponse"
+            write-host $body1
             exit
         }  
     }
