@@ -842,7 +842,7 @@ function Save-EventDetails {
     } | ConvertTo-Json -Depth 20
     invoke-restmethod -Method 'POST' -uri $uriResize -body $bodyResize -Headers $appHeaders -ContentType "application/json" | out-Null
     Send-Update -t 1 -c "-------------------------------------------------------"
-    Send-Update -t 1 -c "Your even has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
+    Send-Update -t 1 -c "Your event has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
     Send-Update -t 1 -c "Or open your Google Drive and navigate to: <your drive>/HarnessEvents/$($config.GoogleEventName)"
 
 }
