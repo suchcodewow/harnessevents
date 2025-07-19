@@ -702,11 +702,11 @@ function Save-EventDetails {
         $GoogleDetails += "Google Artifact Registry,https://console.cloud.google.com/artifacts?project=$($config.GoogleProjectId)`r`n"
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
-    $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
         $members | Export-Csv "$($config.GoogleEventName).csv"
+        $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
         Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
         return
     }
@@ -2154,6 +2154,95 @@ function Add-OrgTemplates {
             }
             else {
                 Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
+            }
+        }
+    }
+}
+function Add-Policies {
+    # Install all policies
+    $uri = "https://app.harness.io/pm/api/v1/policies?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $orgPolicies = gcloud storage ls gs://harnesseventsdata/Policies/*.policy 
+    foreach ($policy in   $orgPolicies) {
+        $policyId = (split-path $policy -Leaf).split(".")[0]
+        $policyName = $policyId.Replace("_"," ")
+        $policyContent = gcloud storage cat $policy | Out-String
+        $body = @{
+            "name"       = $policyName
+            "identifier" = $policyId
+            "rego"       = $policyContent
+        } | ConvertTo-Json
+        Try {
+            Invoke-Restmethod -method 'POST' -uri $uri -body $body -ContentType "application/json" -headers $HarnessHeaders | Out-Null
+        }
+        Catch {
+            # Generates a System.Management.Automation.ErrorRecord
+            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("policy identifier must be unique")) {
+                    Send-Update -t 0 -c "Policy: $policyId already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to create policy: $policyId with error: $errorResponse.message"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "template yaml:"
+                    Send-Update -t 0 -c $body
+                }  
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create policy: $policyId. 401: $_)"
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
+            }
+        }
+    }
+    # Then install policysets using ID's of created policies
+    $uriPolicyset = "https://app.harness.io/gateway/pm/api/v1/policysets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $policySets = gcloud storage ls gs://harnesseventsdata/Policies/*.policyset
+    foreach ($policyset in $policySets) {
+        $setId = (split-path $policyset -Leaf).split(".")[0]
+        $setName = $setId.Replace("_"," ")
+        $setContent = gcloud storage cat $policyset | Convertfrom-Json
+        $setBody = @{
+            "name"       = $setName
+            "identifier" = $setId
+            "action"     = "onsave"
+            "enabled"    = $false
+            "type"       = "pipeline"
+            "policies"   = @(
+                $setContent
+            )
+        } | ConvertTo-Json
+        Try {
+            Invoke-Restmethod -method 'POST' -uri $uriPolicyset -body $setBody -ContentType "application/json" -headers $HarnessHeaders | Out-Null
+        }
+        Catch {
+            # Generates a System.Management.Automation.ErrorRecord
+            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("policy set identifier must be unique")) {
+                    Send-Update -t 0 -c "Policy set: $setId already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to create policy set: $setId with error: $errorResponse.message"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "template yaml:"
+                    Send-Update -t 0 -c $body
+                }  
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create policy set: $setId. 401: $_)"
                 Send-Update -t 0 -c "URI: $uri"
                 Send-Update -t 0 -c "ContentType: $contentType"
                 Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
