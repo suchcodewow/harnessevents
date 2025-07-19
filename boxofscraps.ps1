@@ -1,4 +1,5 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
+# VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
 param (
     [switch] $help, # show other command options and exit
     [switch] $verbose, # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
@@ -8,205 +9,6 @@ param (
 )
 
 # Core Functions
-function Get-UserName {
-    # Generate a fun PG-rated madlibs-style username
-    $Prefix = @(
-        "abundant",
-        "delightful",
-        "high",
-        "nutritious",
-        "square",
-        "adorable",
-        "dirty",
-        "hollow",
-        "obedient",
-        "steep",
-        "agreeable",
-        "drab",
-        "hot",
-        "living",
-        "dry",
-        "hot",
-        "odd",
-        "straight",
-        "dusty",
-        "huge",
-        "strong",
-        "beautiful",
-        "eager",
-        "icy",
-        "orange",
-        "substantial",
-        "better",
-        "early",
-        "immense",
-        "panicky",
-        "sweet",
-        "bewildered",
-        "easy",
-        "important",
-        "petite",
-        "swift",
-        "big",
-        "elegant",
-        "inexpensive",
-        "plain",
-        "tall",
-        "embarrassed",
-        "itchy",
-        "powerful",
-        "tart",
-        "black",
-        "prickly",
-        "tasteless",
-        "faint",
-        "jolly",
-        "proud",
-        "teeny",
-        "brave",
-        "famous",
-        "kind",
-        "purple",
-        "tender",
-        "breeze",
-        "fancy",
-        "broad",
-        "fast",
-        "quaint",
-        "thoughtful",
-        "tiny",
-        "bumpy",
-        "light",
-        "quiet",
-        "calm",
-        "fierce",
-        "little",
-        "rainy",
-        "careful",
-        "lively",
-        "rapid",
-        "uneven",
-        "chilly",
-        "flaky",
-        "interested",
-        "flat",
-        "relieved",
-        "unsightly",
-        "clean",
-        "fluffy",
-        "loud",
-        "uptight",
-        "clever",
-        "freezing",
-        "vast",
-        "clumsy",
-        "fresh",
-        "lumpy",
-        "victorious",
-        "cold",
-        "magnificent",
-        "warm",
-        "colossal",
-        "gentle",
-        "mammoth",
-        "salty",
-        "gifted",
-        "scary",
-        "gigantic",
-        "massive",
-        "scrawny",
-        "glamorous",
-        "screeching",
-        "whispering",
-        "cuddly",
-        "messy",
-        "shallow",
-        "curly",
-        "miniature",
-        "curved",
-        "great",
-        "modern",
-        "shy",
-        "wide-eyed",
-        "witty",
-        "damp",
-        "grumpy",
-        "mysterious",
-        "skinny",
-        "wooden",
-        "handsome",
-        "narrow",
-        "worried",
-        "deafening",
-        "happy",
-        "nerdy",
-        "heavy",
-        "soft",
-        "helpful",
-        "noisy",
-        "sparkling",
-        "young",
-        "delicious"
-    )
-      
-    $Name = @(
-        "apple",
-        "seashore",
-        "badge",
-        "flock",
-        "sidewalk",
-        "basket",
-        "basketball",
-        "furniture",
-        "smoke",
-        "battle",
-        "geese",
-        "bathtub",
-        "beast",
-        "ghost",
-        "nose",
-        "beetle",
-        "giraffe",
-        "sidewalk",
-        "beggar",
-        "governor",
-        "honey",
-        "stage",
-        "bubble",
-        "hope",
-        "station",
-        "bucket",
-        "income",
-        "cactus",
-        "island",
-        "throne",
-        "cannon",
-        "cow",
-        "judge",
-        "toothbrush",
-        "celery",
-        "lamp",
-        "turkey",
-        "cellar",
-        "lettuce",
-        "umbrella",
-        "marble",
-        "underwear",
-        "coach",
-        "month",
-        "vacation",
-        "coast",
-        "vegetable",
-        "crate",
-        "ocean",
-        "plane",
-        "donkey",
-        "playground",
-        "visitor",
-        "voyage"
-    )      
-    return "$(Get-Random -inputObject $Prefix)$(Get-Random -inputObject $Name)"
-}
 function Send-Update {
     # Handle output to screen & log, execute commands to cloud systems and return results
     param(
@@ -438,6 +240,205 @@ function Get-Randomstring {
     return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
 
 }
+function Get-UserName {
+    # Generate a fun PG-rated madlibs-style username
+    $Prefix = @(
+        "abundant",
+        "delightful",
+        "high",
+        "nutritious",
+        "square",
+        "adorable",
+        "dirty",
+        "hollow",
+        "obedient",
+        "steep",
+        "agreeable",
+        "drab",
+        "hot",
+        "living",
+        "dry",
+        "hot",
+        "odd",
+        "straight",
+        "dusty",
+        "huge",
+        "strong",
+        "beautiful",
+        "eager",
+        "icy",
+        "orange",
+        "substantial",
+        "better",
+        "early",
+        "immense",
+        "panicky",
+        "sweet",
+        "bewildered",
+        "easy",
+        "important",
+        "petite",
+        "swift",
+        "big",
+        "elegant",
+        "inexpensive",
+        "plain",
+        "tall",
+        "embarrassed",
+        "itchy",
+        "powerful",
+        "tart",
+        "black",
+        "prickly",
+        "tasteless",
+        "faint",
+        "jolly",
+        "proud",
+        "teeny",
+        "brave",
+        "famous",
+        "kind",
+        "purple",
+        "tender",
+        "breeze",
+        "fancy",
+        "broad",
+        "fast",
+        "quaint",
+        "thoughtful",
+        "tiny",
+        "bumpy",
+        "light",
+        "quiet",
+        "calm",
+        "fierce",
+        "little",
+        "rainy",
+        "careful",
+        "lively",
+        "rapid",
+        "uneven",
+        "chilly",
+        "flaky",
+        "interested",
+        "flat",
+        "relieved",
+        "unsightly",
+        "clean",
+        "fluffy",
+        "loud",
+        "uptight",
+        "clever",
+        "freezing",
+        "vast",
+        "clumsy",
+        "fresh",
+        "lumpy",
+        "victorious",
+        "cold",
+        "magnificent",
+        "warm",
+        "colossal",
+        "gentle",
+        "mammoth",
+        "salty",
+        "gifted",
+        "scary",
+        "gigantic",
+        "massive",
+        "scrawny",
+        "glamorous",
+        "screeching",
+        "whispering",
+        "cuddly",
+        "messy",
+        "shallow",
+        "curly",
+        "miniature",
+        "curved",
+        "great",
+        "modern",
+        "shy",
+        "wide-eyed",
+        "witty",
+        "damp",
+        "grumpy",
+        "mysterious",
+        "skinny",
+        "wooden",
+        "handsome",
+        "narrow",
+        "worried",
+        "deafening",
+        "happy",
+        "nerdy",
+        "heavy",
+        "soft",
+        "helpful",
+        "noisy",
+        "sparkling",
+        "young",
+        "delicious"
+    )
+      
+    $Name = @(
+        "apple",
+        "seashore",
+        "badge",
+        "flock",
+        "sidewalk",
+        "basket",
+        "basketball",
+        "furniture",
+        "smoke",
+        "battle",
+        "geese",
+        "bathtub",
+        "beast",
+        "ghost",
+        "nose",
+        "beetle",
+        "giraffe",
+        "sidewalk",
+        "beggar",
+        "governor",
+        "honey",
+        "stage",
+        "bubble",
+        "hope",
+        "station",
+        "bucket",
+        "income",
+        "cactus",
+        "island",
+        "throne",
+        "cannon",
+        "cow",
+        "judge",
+        "toothbrush",
+        "celery",
+        "lamp",
+        "turkey",
+        "cellar",
+        "lettuce",
+        "umbrella",
+        "marble",
+        "underwear",
+        "coach",
+        "month",
+        "vacation",
+        "coast",
+        "vegetable",
+        "crate",
+        "ocean",
+        "plane",
+        "donkey",
+        "playground",
+        "visitor",
+        "voyage"
+    )      
+    return "$(Get-Random -inputObject $Prefix)$(Get-Random -inputObject $Name)"
+}
 
 # Event Functions
 function New-Event {
@@ -579,7 +580,6 @@ function Set-EventUsers {
     Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Get-Events {
-
     # Check token status/refresh
     Get-GoogleAccessToken
     # Create an instructor email account if needed
@@ -615,6 +615,12 @@ function Get-Events {
         Set-Prefs -k "GoogleEventId" -v $eventDefault.id
         Set-Prefs -k "GoogleEventEmail" -v $eventDefault.email
         Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
+    }
+    else {
+        Set-Prefs -k "GoogleEventName" 
+        Set-Prefs -k "GoogleEventId"
+        Set-Prefs -k "GoogleEventEmail"
+        Set-Prefs -k "HarnessOrg" 
     }
 }
 function Set-Event {
@@ -696,11 +702,11 @@ function Save-EventDetails {
         $GoogleDetails += "Google Artifact Registry,https://console.cloud.google.com/artifacts?project=$($config.GoogleProjectId)`r`n"
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
-    $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
         $members | Export-Csv "$($config.GoogleEventName).csv"
+        $GoogleDetails | Add-Content -Path "$($config.GoogleEventName).csv"
         Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
         return
     }
@@ -836,7 +842,7 @@ function Save-EventDetails {
     } | ConvertTo-Json -Depth 20
     invoke-restmethod -Method 'POST' -uri $uriResize -body $bodyResize -Headers $appHeaders -ContentType "application/json" | out-Null
     Send-Update -t 1 -c "-------------------------------------------------------"
-    Send-Update -t 1 -c "Your even has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
+    Send-Update -t 1 -c "Your event has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
     Send-Update -t 1 -c "Or open your Google Drive and navigate to: <your drive>/HarnessEvents/$($config.GoogleEventName)"
 
 }
@@ -1275,7 +1281,7 @@ function Get-GroupMembers {
         [Parameter()]
         [string] $groupEmail,
         [Parameter()]
-        [switch] $splitIntoGroups # organize the results into owners/members and provided a count
+        [switch] $splitIntoGroups # organize the results into owners/members and provide a count
     )
     Get-GoogleAccessToken
     # Retrieve group key - or use cached default if none provided
@@ -1325,6 +1331,7 @@ function Get-GroupKey {
 function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
     # It will enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
+    # It will add filters listed at gs://harnesseventsdata/config/filters.json
     # Then enable google-auth in oauth settings and create an attendee role
     # It will load all secrets starting with 'org' from google secret manager
     # It will load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
@@ -1343,6 +1350,14 @@ function Add-HarnessEventDetails {
         Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
         Start-Sleep -s 2
     } until (-not $flagsNeeded)
+    # Add filters to make it easier to find stuff
+    $filters = gcloud storage cat gs://harnesseventsdata/config/filters.json | Convertfrom-Json
+    foreach ($filterObject in $filters.psobject.Properties.name) {
+        foreach ($filter in $filters.$filterObject) {
+            #write-host "type $filterObject name $filter"
+            Add-Filter -filterType $filterObject -name $filter
+        }
+    }
     #Enable Google Auth for attendee access & Org level bits
     Enable-GoogleAuth
     Add-Organization
@@ -1997,38 +2012,78 @@ function Add-SecretJson {
     Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
 }
 function Add-OrgTemplates {
+    # This is currently a bit complex.  There are several yaml types in Harness that use aaaalllllmost the same
+    # api structure.  Right now this function is identifying the type from the first line of yaml and then handling
+    # multiple scenarios.
     $OrgTemplates = gcloud storage ls gs://harnesseventsdata/OrgTemplates/*.yaml
     foreach ($yaml in $OrgTemplates) {
         $modifiedTemplate = ""
         $templateId = (split-path $yaml -Leaf).split(".")[0]
         $templateName = $templateId.Replace("_"," ")
         $template = gcloud storage cat $yaml
-        foreach ($line in $template) {
-            $addThisLine = $true
-            switch ($line.trim()) {
-                "template:" {
-                    $modifiedTemplate += "$line`r`n"
-                    $modifiedTemplate += "  name: $templateName`r`n"
-                    $modifiedTemplate += "  identifier: $templateId`r`n"
-                    $modifiedTemplate += "  versionLabel: ""1""`r`n"
-                    $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
-                    $addThisLine = $false
-                    $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&"
-                    $contentType = "application/json"
-                    $templateType = "template"
-                }
-                "connector:" { 
-                    $modifiedTemplate += "$line`r`n"
-                    $modifiedTemplate += "  name: $templateName`r`n"
-                    $modifiedTemplate += "  identifier: $templateId`r`n"
-                    $modifiedTemplate += "  versionLabel: ""1""`r`n"
-                    $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
-                    $addThisLine = $false
-                    $uri = "https://app.harness.io/gateway/ng/api/connectors?"
-                    $contentType = "text/yaml"
-                    $templateType = "connector"
-                }
+        # There are multiple endpoints for essentially the same yaml.  Identify the type when it appears in the yaml
+        # then setup the API requirements that team thought would be fun the day they designed their endpoint in a vacuum.
+        $templateFirstLine = $template[0].trim()
+        switch ($templateFirstLine) {
+            "template:" {
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                $modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/template/api/templates?storeType=INLINE&accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "application/json"
+                $templateType = "template"
             }
+            "connector:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                $modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/connectors?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "text/yaml"
+                $templateType = "connector"
+            }
+            "service:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/servicesV2?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "application/json"
+                $templateType = "service"
+            }
+            "environment:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/environmentsV2?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+                $contentType = "application/json"
+                $templateType = "environment"
+            }
+            "infrastructureDefinition:" { 
+                $modifiedTemplate += "$templateFirstLine`r`n"
+                $modifiedTemplate += "  name: $templateName`r`n"
+                $modifiedTemplate += "  identifier: $templateId`r`n"
+                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
+                $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
+                $uri = "https://app.harness.io/ng/api/infrastructures?accountIdentifier=$($config.HarnessAccountId)"
+                $contentType = "application/json;charset=utf-8"
+                $templateType = "infrastructureDefinition"
+            }
+            default {
+                Send-Update -t 0 -c "Unknown template type $templateId with first line of $templateFirstLine"
+                break
+            }
+        }
+        # Load all remaining lines except the ones updated above.
+        foreach ($line in $template | Select-Object -skip 1) {
+            $addThisLine = $true
+            # Ignore any of these situations- it was already set above
             if ($line.length -ge 7 -and $line.substring(0,7) -eq "  name:") {
                 $addThisLine = $false
             }
@@ -2045,18 +2100,41 @@ function Add-OrgTemplates {
                 $modifiedTemplate += "$line`r`n"
             }
         }
-        if (-not $uri) {
-            write-host "$yaml isn't a supported type (template: or connector:)"
-        }
-        else {
-            $uri += "accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-        }
         $templateheaders = @{
             'x-api-key' = $config.HarnessPAT
         }
+        # It's insane, but some API calls require duplicating values both in yaml and in body (????).. 
+        # so add more duplicate unecessary logic... and then have a little cry.
+        switch ($templateFirstLine) {
+            "service:" {
+                $body = @{
+                    "name"          = $templateName
+                    "identifier"    = $templateId
+                    "orgIdentifier" = $config.HarnessOrg
+                    "yaml"          = $modifiedTemplate
+                } | Convertto-Json
+            }
+            "environment:" {
+                $body = @{
+                    "name"          = $templateName
+                    "identifier"    = $templateId
+                    "orgIdentifier" = $config.HarnessOrg
+                    "type"          = "Production"
+                    "yaml"          = $modifiedTemplate
+                } | Convertto-Json
+            }
+            "infrastructureDefinition:" {
+                $body = @{
+                    "yaml" = $modifiedTemplate
+                } | ConvertTo-Json
+            }
+            default {
+                $body = $modifiedTemplate
+            }
+        }
         Try {
             Send-Update -t 1 -c "Adding/Updating org $($templateType): $templateId"
-            Invoke-RestMethod -uri $uri -body $modifiedTemplate -Method 'POST' -headers $templateheaders -ContentType $contentType | Out-null
+            Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $templateheaders -ContentType $contentType | Out-null
         }
         Catch {
             # Generates a System.Management.Automation.ErrorRecord
@@ -2067,17 +2145,187 @@ function Add-OrgTemplates {
                 }
                 else {
                     Send-Update -t 2 -c "Failed to create template: $templateId with error: $errorResponse.message"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "template yaml:"
+                    Send-Update -t 0 -c $body
                 }  
             }
             else {
                 Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
-                Send-Update -t 2 -c "URI: $uri"
-                Send-Update -t 2 -c "ContentType: $contentType"
-                Send-Update -t 2 -c "Headers: $($templateheaders | Select-Object -Property *)"
-                Send-Update -t 2 -c "template yaml: $modifiedTemplate" 
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
             }
         }
     }
+}
+function Add-Policies {
+    # Install all policies
+    $uri = "https://app.harness.io/pm/api/v1/policies?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $orgPolicies = gcloud storage ls gs://harnesseventsdata/Policies/*.policy 
+    foreach ($policy in   $orgPolicies) {
+        $policyId = (split-path $policy -Leaf).split(".")[0]
+        $policyName = $policyId.Replace("_"," ")
+        $policyContent = gcloud storage cat $policy | Out-String
+        $body = @{
+            "name"       = $policyName
+            "identifier" = $policyId
+            "rego"       = $policyContent
+        } | ConvertTo-Json
+        Try {
+            Invoke-Restmethod -method 'POST' -uri $uri -body $body -ContentType "application/json" -headers $HarnessHeaders | Out-Null
+        }
+        Catch {
+            # Generates a System.Management.Automation.ErrorRecord
+            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("policy identifier must be unique")) {
+                    Send-Update -t 0 -c "Policy: $policyId already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to create policy: $policyId with error: $errorResponse.message"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "template yaml:"
+                    Send-Update -t 0 -c $body
+                }  
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create policy: $policyId. 401: $_)"
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
+            }
+        }
+    }
+    # Then install policysets using ID's of created policies
+    $uriPolicyset = "https://app.harness.io/gateway/pm/api/v1/policysets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    $policySets = gcloud storage ls gs://harnesseventsdata/Policies/*.policyset
+    foreach ($policyset in $policySets) {
+        $setId = (split-path $policyset -Leaf).split(".")[0]
+        $setName = $setId.Replace("_"," ")
+        $setContent = gcloud storage cat $policyset | Convertfrom-Json
+        $setBody = @{
+            "name"       = $setName
+            "identifier" = $setId
+            "action"     = "onsave"
+            "enabled"    = $false
+            "type"       = "pipeline"
+            "policies"   = @(
+                $setContent
+            )
+        } | ConvertTo-Json
+        Try {
+            Invoke-Restmethod -method 'POST' -uri $uriPolicyset -body $setBody -ContentType "application/json" -headers $HarnessHeaders | Out-Null
+        }
+        Catch {
+            # Generates a System.Management.Automation.ErrorRecord
+            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("policy set identifier must be unique")) {
+                    Send-Update -t 0 -c "Policy set: $setId already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to create policy set: $setId with error: $errorResponse.message"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "template yaml:"
+                    Send-Update -t 0 -c $body
+                }  
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create policy set: $setId. 401: $_)"
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
+            }
+        }
+    }
+}
+function Add-Filter {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $filterType, #Connector, Template, Secret known so far (api reference is blank- fun!)
+        [string]
+        $name
+    )
+    # Need to use a combination of documented and undocumented API's here.  It's ok though.  I'm all cried out at this point.
+    # The API can't hurt me any more.
+    Switch ($filterType) {
+        "Connector" {
+            $uri = "https://app.harness.io/ng/api/filters?accountIdentifier=$($config.HarnessAccountId)"
+        }
+        "Template" {
+            $uri = "https://app.harness.io/template/api/filters?accountIdentifier=$($config.HarnessAccountId)"
+        }
+        default {
+            Send-Update -t 0 -c "$filterType is unsupported. Can't add $name"
+        }
+    }
+    $body = @{
+        "name"             = $name
+        "identifier"       = $name
+        "orgIdentifier"    = $config.HarnessOrg
+        "filterVisibility" = "EveryOne"
+        "filterProperties" = @{
+            "connectorNames"       = @()
+            "connectorIdentifiers" = @()
+            "filterType"           = $filterType
+            "tags"                 = @{
+                $name = ""
+            }
+        }
+    } | ConvertTo-Json -Depth 5
+    $body1 = @{
+        filterVisibility = "EveryOne"
+        identifier       = "gcp"
+        orgIdentifier    = "event_builder"
+        name             = "gcp"
+        filterProperties = @{
+            tags                 = @{
+                gcp = ""
+            }
+            connectorNames       = @()
+            connectorIdentifiers = @()
+            filterType           = "Template"
+        }
+    } | ConvertTo-Json -Depth 5
+    $templateheaders = @{
+        'x-api-key' = $config.HarnessPAT
+    }
+    Try {
+        Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $templateheaders -ContentType "application/json" | Out-null
+    }
+    Catch {
+        $errorResponse = $_ | Convertfrom-Json
+        if ($errorResponse.code -eq "DUPLICATE_FIELD") {
+            Send-Update -t 1 -c "Filter $name already exists in org $($config.HarnessOrg)."
+        }
+        else {
+            Send-Update -t 2 -c "uri attempted was: $uri"
+            Send-Update -t 2 -c "body was: $body"
+            Send-Update -t 2 -c "Failed to create filter with error: $errorResponse"
+            write-host $body1
+            exit
+        }  
+    }
+}
+function Get-Filters {
+    # currently unused because you have to 
+    $uri = "https://app.harness.io/ccm/api/filters?pageIndex=0&pageSize=100&accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&type=Connector"
+    Invoke-RestMethod -uri $uri -headers $HarnessHeaders -method 'GET'
 }
 function Get-DelegateConfig {
     [CmdletBinding()]
@@ -2202,7 +2450,6 @@ function Get-FeatureFlagStatus {
     $currentFlags = [pscustomobject]@{}
     foreach ($item in $response.features) {
         $value = $item.envProperties.variationMap | Where-Object { $_.targets.identifier -eq $($config.HarnessAccountId) } | select-object -expandproperty variation
-        #write-host "$($item.identifier):$value"
         $currentFlags | Add-Member -MemberType NoteProperty -name $item.identifier -value $value -Force
     }
     return $currentFlags
