@@ -1,11 +1,14 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
 param (
-    [switch] $help, # show other command options and exit
-    [switch] $verbose, # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
     [switch] $cloudCommands, # enable to show commands
+    [switch] $deploytest, #test deployment with standard settings
+    [string] $googleCloudProjectOverride, #override project creation to use a specific project
+    [switch] $help, # show other command options and exit
+    [switch] $janitormode, # sweep sweep!
     [switch] $logReset, # enable to reset log between runs
-    [string] $googleCloudProjectOverride
+    [switch] $removetest, #test removal of all elements
+    [switch] $verbose # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
 )
 
 # Core Functions
@@ -440,30 +443,66 @@ function Get-UserName {
     return "$(Get-Random -inputObject $Prefix)$(Get-Random -inputObject $Name)"
 }
 
+#Automated Functions
+function Get-DeployTest {
+    # Run a deploytest if cmd line switch used
+    # The process expects `gcloud auth activate-service-account` was already run with clousdk service account
+    if (-not $deploytest) {
+        return
+    }
+    Send-Update -t 1 -c "Running Deployment Test"
+    # Error out with any problems
+    $ErrorActionPreference = "Stop"
+    $currentUser = gcloud auth list --format='value(account)'
+    Set-Prefs -k "GoogleUser" -v $currentUser
+    Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
+    Set-Prefs -k "DeployTest" -v $true
+    Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
+    Set-Prefs -k "UserEventCount" -v 3
+    New-Event
+    Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
+    Sync-Event
+    Send-Update -t 1 -c "End Deployment Test"
+    exit
+}
+function Get-RemoveTest {
+    # Run removetest if cmd line switch used
+    if (-not $removetest) {
+        return
+    }
+    Send-Update -t 1 -c "Running event removal test"
+    # Error out with any problems
+    $ErrorActionPreference = "Stop"
+    # $currentUser = gcloud auth list --format='value(account)'
+    # Set-Prefs -k "GoogleUser" -v $currentUser
+    # Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
+    # Set-Prefs -k "DeployTest" -v $true
+    # Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
+    # Set-Prefs -k "UserEventCount" -v 3
+    # New-Event
+    # Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
+    # Sync-Event
+    Send-Update -t 1 -c "End Removal Test"
+    exit
+}
+function Get-JanitorMode {}
+
 # Event Functions
 function New-Event {
     # Add new event (essentially a google group with attached email)
     Get-GoogleAccessToken
     while (-not $nameselected) {
-        $newEvent = read-host -prompt "Name for new event? (lower characters only) <enter> to abort"
+        # If this is an automated deployment test, use presets
+        if ($config.DeployTest) {
+            Send-Update -t 1 -c "Deployment Test running using name: DeployTest"
+            $newEvent = "DeployTest"
+        }
+        else {
+            $newEvent = read-host -prompt "Name for new event? (lower characters only) <enter> to abort"
+        }
         if (-not($newEvent)) {
             return
         }
-        # while (-not $usersToAdd) {
-        #     $userCount = read-host -prompt "How many users to add now (including instructors)? <enter> for 0"
-        #     if (-not($userCount)) {
-        #         break
-        #     }
-        #     if ($userCount -match '^[0-9]+$') {
-        #         $usersToAdd = $userCount
-        #     }
-        #     else {
-        #         Send-Update -t 2 -c "Whoa bud, howbow a number there for quantity of user?"
-        #     }
-        # }
-        #Set-Prefs -k "presetUsers" -v $usersToAdd
-        #$newToken = read-host -prompt "Harness Account admin token to use <enter> to add later"
-        #Set-Prefs -k "presetToken" -v $newToken
         $eventName = $newEvent -replace '\W', ''
         $eventName = "event-" + $eventName.tolower()
         $newEmail = $eventName + "@harnessevents.io"
@@ -493,6 +532,10 @@ function New-Event {
         }
         else {
             Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
+            if ($config.DeployTest) {
+                Send-Update -t 2 -c "Previous automated test did not successfully delete event email: $newEmail"
+                Exit 1
+            }
         }
     }
     $eventId = Get-GroupKey -g $nameselected
@@ -624,11 +667,6 @@ function Get-Events {
     }
 }
 function Set-Event {
-    # param(
-    #     [object] $preset # optional preset to bypass selection
-    # )
-    # $eventSelected = $preset
-    #Prompt for event option
     Get-Events
     while (-not $eventSelected) {
         write-output $eventList | sort-object -property Option | format-table $eventColumns | Out-Host
@@ -853,12 +891,26 @@ function Remove-Event {
     # It will delete the event email (completely eliminating the event)
     # It will set all known secrets to a value of 123
     # It will set the "go forward" feature flags as shown in featureflagend.json
-
-    Remove-GCP-Project
-    $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
-    If ($confirm -ne "y") {
-        return
+    if ($config.DeployTest) {
+        Send-Update -t 1 -c "Bypassing event delete confirmation"
     }
+    else {
+        $confirm = Read-Host -prompt "Confirm you want to remove event: $($config.GoogleEventName)? <y for yes>"
+        If ($confirm -ne "y") {
+            return
+        }
+    }
+    Get-GoogleAccessToken
+    $script:HarnessHeaders = @{
+        'x-api-key'    = $config.HarnessPAT
+        'Content-Type' = 'application/json'
+    }
+    $script:HarnessFFHeaders = @{
+        'x-api-key'    = $config.HarnessFFToken
+        'Content-Type' = 'application/json'
+    }
+    #Remove Google Project if it exists
+    Remove-GCP-Project
     # Remove Harness event
     if ($config.HarnessPAT) {
         $harnessRemoved = Remove-HarnessEventDetails
@@ -900,7 +952,7 @@ function Remove-Event {
             Send-Update -t 2 -c "Deleting the google group took too long. I'm OUTTA here."
             exit
         }
-        Send-Update -t 1 -c "Waiting for group deletion .."
+        Send-Update -t 1 -c "Waiting for group deletion..."
         Send-Update -t 0 -c "Group exists uri: $groupCheckUri"
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
@@ -1038,10 +1090,14 @@ function Get-GoogleAccessToken {
         Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
         exit
     }
-    # Sneak in grabbing the Harness Feature Flag token even though this is a google function. shhhhh!
+    # Sneak in grabbing the Harness Feature Flag token and HarnessEvents PATeven though this is a google function. shhhhh!
     if (-not $config.HarnessFFToken) {
         $HarnessFFToken = Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsFF' --project=$($config.AdminProjectId)" 
         Set-Prefs -k "HarnessFFToken" -v $HarnessFFToken
+    }
+    if (-not $config.HarnessEventsPAT) {
+        $HarnessEventsPAT = Send-Update -t 1 -c "Snagging HarnessEvents PAT" -r "gcloud secrets versions access latest --secret='HarnessEventsPAT' --project=$($config.AdminProjectId)"
+        Set-Prefs -k "HarnessEventsPAT" -v $HarnessEventsPAT
     }
     Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
     $authorizationCode = Send-Update -t 1 -c "Retrieving account token" -r "gcloud auth print-access-token --scopes='https://www.googleapis.com/auth/admin.directory.user https://www.googleapis.com/auth/admin.directory.group'"
@@ -1057,7 +1113,6 @@ function Get-GoogleAccessToken {
             "Authorization" = "Bearer $($config.GoogleAccessToken)"
         }
         Send-Update -t 0 -c "Successfully retrieved a new token and timestamp."
-
     }
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
@@ -1065,10 +1120,14 @@ function Get-GoogleAccessToken {
     Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
-    # Cleanup due to GOogle's stupid requirement that the json be an actual *file*.  Eat it, Google.
+    # Cleanup due to Google's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
 }
 function Get-GoogleAppToken {
+    # Bypass this is running as a deployment test - it won't have the ability to write out a google sheet
+    if ($config.DeployTest) {
+        return
+    }
     if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
         # Check if token is over 50m old
         $TimeDiff = $(Get-Date) - $config.GoogleAppTokenTimestamp
@@ -1350,6 +1409,9 @@ function Add-HarnessEventDetails {
         Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
         Start-Sleep -s 2
     } until (-not $flagsNeeded)
+    #Enable Google Auth for attendee access & Org level bits
+    Enable-GoogleAuth
+    Add-Organization
     # Add filters to make it easier to find stuff
     $filters = gcloud storage cat gs://harnesseventsdata/config/filters.json | Convertfrom-Json
     foreach ($filterObject in $filters.psobject.Properties.name) {
@@ -1358,11 +1420,10 @@ function Add-HarnessEventDetails {
             Add-Filter -filterType $filterObject -name $filter
         }
     }
-    #Enable Google Auth for attendee access & Org level bits
-    Enable-GoogleAuth
-    Add-Organization
     Add-OrgSecrets
-    Add-OrgTemplates
+    # Add Environments
+    Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgEnvironments/*.yaml"
+    Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgTemplates/*.yaml"
     Add-AttendeeRole
     foreach ($attendee in $attendees) {
         if ($attendee.role -eq "OWNER") {
@@ -2011,11 +2072,17 @@ function Add-SecretJson {
     }
     Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
 }
-function Add-OrgTemplates {
+function Add-OrgYaml {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $YamlFolder
+    )
     # This is currently a bit complex.  There are several yaml types in Harness that use aaaalllllmost the same
     # api structure.  Right now this function is identifying the type from the first line of yaml and then handling
     # multiple scenarios.
-    $OrgTemplates = gcloud storage ls gs://harnesseventsdata/OrgTemplates/*.yaml
+    $OrgTemplates = gcloud storage ls $YamlFolder
     foreach ($yaml in $OrgTemplates) {
         $modifiedTemplate = ""
         $templateId = (split-path $yaml -Leaf).split(".")[0]
@@ -2049,7 +2116,6 @@ function Add-OrgTemplates {
                 $modifiedTemplate += "$templateFirstLine`r`n"
                 $modifiedTemplate += "  name: $templateName`r`n"
                 $modifiedTemplate += "  identifier: $templateId`r`n"
-                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
                 $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
                 $uri = "https://app.harness.io/ng/api/servicesV2?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
                 $contentType = "application/json"
@@ -2059,7 +2125,6 @@ function Add-OrgTemplates {
                 $modifiedTemplate += "$templateFirstLine`r`n"
                 $modifiedTemplate += "  name: $templateName`r`n"
                 $modifiedTemplate += "  identifier: $templateId`r`n"
-                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
                 $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
                 $uri = "https://app.harness.io/ng/api/environmentsV2?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
                 $contentType = "application/json"
@@ -2069,7 +2134,6 @@ function Add-OrgTemplates {
                 $modifiedTemplate += "$templateFirstLine`r`n"
                 $modifiedTemplate += "  name: $templateName`r`n"
                 $modifiedTemplate += "  identifier: $templateId`r`n"
-                #$modifiedTemplate += "  versionLabel: ""1""`r`n"
                 $modifiedTemplate += "  orgIdentifier: $($config.HarnessOrg)`r`n"
                 $uri = "https://app.harness.io/ng/api/infrastructures?accountIdentifier=$($config.HarnessAccountId)"
                 $contentType = "application/json;charset=utf-8"
@@ -2480,9 +2544,8 @@ function Update-FeatureFlag {
         )
     } | ConvertTo-Json -Depth 10
     $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=$($config.HarnessEnv)"
-    $response = Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body
+    Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body | Out-Null
     Send-Update -t 1 -c "feature flag $flag variation set: $value"
-    return $response
 }
 
 # Classroom Functions
@@ -2634,6 +2697,9 @@ function New-AWSProject {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
+Get-DeployTest
+Get-RemoveTest
+Get-JanitorMode
 Get-GoogleLogin
 while ($true) {
     #Get-Events -preset

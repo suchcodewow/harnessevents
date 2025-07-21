@@ -496,7 +496,7 @@ Get-Prefs($Myinvocation.MyCommand.Source)
 Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 
 # Main
-pwsh --version
+#pwsh --version
 write-host $(gcloud auth activate-service-account --key-file=key.json)
 $maxProjectAge = 1
 $projects = Get-ProjectList
