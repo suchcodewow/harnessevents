@@ -31,6 +31,13 @@
       "request": "launch",
       "script": "${file}",
       "args": ["-v", "-c", "-d"]
+    },
+    {
+      "name": "Removaltest",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-v", "-c", "-r"]
     }
   ]
 }

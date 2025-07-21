@@ -473,15 +473,8 @@ function Get-RemoveTest {
     Send-Update -t 1 -c "Running event removal test"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
-    # $currentUser = gcloud auth list --format='value(account)'
-    # Set-Prefs -k "GoogleUser" -v $currentUser
-    # Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-    # Set-Prefs -k "DeployTest" -v $true
-    # Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
-    # Set-Prefs -k "UserEventCount" -v 3
-    # New-Event
-    # Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
-    # Sync-Event
+    Set-Prefs -k "RemoveTest" -v $true
+    Remove-Event
     Send-Update -t 1 -c "End Removal Test"
     exit
 }
@@ -957,6 +950,9 @@ function Remove-Event {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
+    if ($config.RemoveTest) {
+        Remove-Organization
+    }
     Set-Prefs -k "GoogleEventEmail"
     Set-Prefs -k "GoogleEventId"
     Set-Prefs -k "GoogleEventName"
@@ -1901,6 +1897,13 @@ function Add-Organization {
             exit
         }
     }
+}
+function Remove-Organization {
+    # !!! This is only used in shared environments or when testing !!!
+    # Ideally, attendee access will be removed and secrets cleared to provide easy onboarding later
+    $uri = "https://app.harness.io/ng/api/organizations/$($config.HarnessOrg)?accountIdentifier=$($config.HarnessAccountId)"
+    Invoke-RestMethod -Method 'DEL' -headers $HarnessHeaders -uri $uri | Out-Null
+    Send-update -t 1 -c "Removed the $($config.HarnessOrg) organization."
 }
 function Get-Organizations {
     # if successful, returns org detail: identifier, name, description, tags
