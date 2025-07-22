@@ -475,8 +475,6 @@ function Get-RemoveTest {
     $ErrorActionPreference = "Stop"
     Set-Prefs -k "RemoveTest" -v $true
     Remove-Event
-    # ONLY removing organization here since this is a repeating test
-    Remove-Organization
     Send-Update -t 1 -c "End Removal Test"
     exit
 }
