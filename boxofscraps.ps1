@@ -478,7 +478,14 @@ function Get-RemoveTest {
     Send-Update -t 1 -c "End Removal Test"
     exit
 }
-function Get-JanitorMode {}
+function Get-JanitorMode {
+    if (-not $janitormode) {
+        return
+    }
+    Send-Update -t 1 -c "Running event cleanup" 
+
+    SEnd-Update -t 1 -c "End event cleanup"
+}
 
 # Event Functions
 function New-Event {
@@ -526,6 +533,10 @@ function New-Event {
         else {
             Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
             if ($config.DeployTest) {
+                # Need to get this even if about to fail so removal works
+                $eventId = Get-GroupKey -g $newEmail
+                Set-Prefs -k "GoogleEventId" -v $eventId
+                Set-Prefs -k "GoogleEventEmail" -v $newEmail
                 Send-Update -t 2 -c "Previous automated test did not successfully delete event email: $newEmail"
                 Exit 1
             }
@@ -936,7 +947,7 @@ function Remove-Event {
     $groupUri = "https://admin.googleapis.com/admin/directory/v1/groups/$($config.GoogleEventId)"
     $GroupCheckUri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email=$($config.GoogleEventEmail)"
     Send-Update -t 0 -c "Deleting group with uri: $groupUri"
-    Invoke-RestMethod -Method 'Delete' -Uri $groupUri -Headers $headers
+    Invoke-RestMethod -Method 'Delete' -Uri $groupUri -Headers $headers | Out-null
     #Wait for group to be gone
     $counter = 0
     Do {
@@ -963,7 +974,7 @@ function Remove-Event {
     Set-Prefs -k "UseGoogleClassroom"
     Set-Prefs -k "UseAzureClassroom"
     Set-Prefs -k "UseAWSClassroom"
-    Set-Prefs -k "HarnessOrg"     
+    Set-Prefs -k "HarnessOrg"   
     Get-Events
 }
 function Get-ClassroomStatus {
@@ -1437,18 +1448,23 @@ function Add-HarnessEventDetails {
 }
 function Remove-HarnessEventDetails {
     # Set Harness flags to post-event state
-    $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
-    $currentFlags = Get-FeatureFlagStatus
-    $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-    foreach ($flag in $flagsNeeded) {
-        Update-FeatureFlag -flag $flag.Name -value $flag.Value
+    if ($config.HarnessAccount -eq "HarnessEvents") {
+        Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
     }
-    do {
+    else {
+        $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
         $currentFlags = Get-FeatureFlagStatus
         $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-        Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
-        Start-Sleep -s 2
-    } until (-not $flagsNeeded)
+        foreach ($flag in $flagsNeeded) {
+            Update-FeatureFlag -flag $flag.Name -value $flag.Value
+        }
+        do {
+            $currentFlags = Get-FeatureFlagStatus
+            $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+            Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
+            Start-Sleep -s 2
+        } until (-not $flagsNeeded)
+    }
     # Remove event users
     Send-Update -t 1 -c "Removing @harnessevents.io users from account: $($config.HarnessAccount)"
     $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
@@ -1475,10 +1491,6 @@ function Remove-HarnessEventDetails {
     } until ($eventUsers.count -eq 0)
     Clear-orgSecrets
     # This worked- remove cached details for event
-    Set-Prefs -k "HarnessAccount"
-    Set-Prefs -k "HarnessAccountId"
-    Set-Prefs -k "HarnessPAT"
-    
     return $true
 }
 function Set-HarnessConfiguration {
@@ -1893,7 +1905,7 @@ function Add-Organization {
             Send-Update -t 1 -c "Organization $harnessOrg already exists."
         }
         else {
-            Send-Update -t 2 -c "Faied to create organization with error: $errorResponse"
+            Send-Update -t 2 -c "Failed to create organization with error: $errorResponse"
             exit
         }
     }
@@ -1902,6 +1914,7 @@ function Remove-Organization {
     # !!! This is only used in shared environments or when testing !!!
     # Ideally, attendee access will be removed and secrets cleared to provide easy onboarding later
     $uri = "https://app.harness.io/ng/api/organizations/$($config.HarnessOrg)?accountIdentifier=$($config.HarnessAccountId)"
+    Send-Update -t 1 -c "Deleting harness org uri: $uri"
     Invoke-RestMethod -Method 'DEL' -headers $HarnessHeaders -uri $uri | Out-Null
     Send-update -t 1 -c "Removed the $($config.HarnessOrg) organization."
 }

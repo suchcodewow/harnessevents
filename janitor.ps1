@@ -516,12 +516,6 @@ foreach ($project in $projects) {
         Send-Update -t 1 -c "Project is over the limit of $maxProjectAge hour(s) old."
         Remove-GCP-Project -projectId $project.projectId
     }
-    # Get cluster status
-    # $clusterExists = Send-Update -t 1 -c "Check $($project.projectId) for kubernetes cluster" -r "gcloud container clusters list --project=$($project.projectId) --format=json " | Convertfrom-Json
-    # if ($clusterExists.count -ge 2) {
-    #     Send-Update -t 2 -c "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
-    #     $issuesList += "$issueStart has $($clusterExists.count) kubernetes clusters. Max expected is 1."
-    # }
 }
 if ($issuesList) {
     Send-Update -t 2 -c "Triggered failed state for this run.  Errors found:`n$issuesList"
