@@ -1493,13 +1493,7 @@ function Remove-HarnessEventDetails {
     # This worked- remove cached details for event
     return $true
 }
-function Set-HarnessConfiguration {
-    #[CmdletBinding()]
-    # param (
-    #     [Parameter()]
-    #     [string]
-    #     $presetToken
-    # )
+function Set-HarnessConfigurationOLD {
     if ($config.HarnessPAT) {
         $response = Test-Connectivity -harnessToken $config.HarnessPAT
         if ($response) {
@@ -1546,22 +1540,58 @@ function Set-HarnessConfiguration {
             Send-Update -t 2 -c "Bruh, token should start with 'pat' and have 4 sections separated by periods.  Please retry."
         }
     }
-    # Save Harness details
     Save-HarnessConfig
-    # We have a valid Harness Account- move on to initializing projects for attendees or if done, move on to classroom setup
-    # if ($config.projectsCreated) {
-    #     Add-Choice -k "HARNESSINIT" -d "Sync Projects with Attendees" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
-    #     Get-ClassroomStatus
-    # }
-    # else {
-    #     if ($config.presetUsers) {
-    #         $presetUsers = $config.presetUsers
-    #         Set-Prefs -k "presetUsers"
-    #         Send-Update -t 0 -c "Sneaking in preset users- this could be better :\"
-    #         Add-EventUsers -preset $presetUsers
+}
+function Set-HarnessConfiguration {
+    # if ($config.HarnessPAT) {
+    #     $response = Test-Connectivity -harnessToken $config.HarnessPAT
+    #     if ($response) {
+    #         Send-Update -t 0 -c "Cached token worked"
+    #         $goodToken = $config.HarnessPAT
     #     }
-    #     Add-HarnessEventDetails
     # }
+    while (-not $goodToken) {
+        #Show list of cached tokens
+        $accountOptions = $config.HarnessList
+        
+        $accountOptions | Format-Table -Property option, HarnessAccount, HarnessAccountId
+        if (-not $config.HarnessList) {
+            $accountChoice = "a"
+        }
+        else {
+            $accountChoice = Read-Host "Select cached token or 'a' to add new token"
+        }
+        if ($accountChoice.tolower() -eq "a") {
+            # Offer option to add new token
+            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token or <enter> to abort"
+        }
+        else {
+            # Or use a locally cached token
+            $newToken = $config.HarnessList | Where-Object { $_.option -eq $accountChoice } | select-object -expandproperty HarnessPAT
+        }
+        if (!$newToken) {
+            write-host -ForegroundColor red "`r`nFine don't pick a valid thing, GOSH!" 
+            return
+        }
+        $checkToken = $newToken.split(".")
+        # Check token for valid format
+        if ($checkToken[0] -eq "pat" -and $checkToken.length -eq 4) {
+            Send-Update -t 1 -c "Valid token format. Checking connectivity..."
+            $response = Test-Connectivity -harnessToken $newToken
+            if ($response) {
+                $goodToken = $newToken
+                # Clear cache so if this is new account projects will be added
+                Set-Prefs -k "projectsCreated"
+            }
+            else {
+                Send-Update -t 2 -c "That token looked valid, but was rejected by the API. Please retry."
+            }
+        }
+        else {
+            Send-Update -t 2 -c "Bruh, token should start with 'pat' and have 4 sections separated by periods.  Please retry."
+        }
+    }
+    Save-HarnessConfig
 }
 function Save-HarnessConfig {
     if ($config.HarnessList) {
@@ -2713,9 +2743,11 @@ function New-AWSProject {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
+# Options for automated execution
 Get-DeployTest
 Get-RemoveTest
 Get-JanitorMode
+# Normal, looped operation for users below
 Get-GoogleLogin
 while ($true) {
     #Get-Events -preset
