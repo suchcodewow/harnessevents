@@ -595,7 +595,6 @@ function Add-EventUsers {
         }
         $counter++
     }
-    Set-Prefs -k "projectsCreated"
     Send-Update -t 1 -c "Waiting for all users to be available..."
     $memberCounter = 0
     While ($memberCount -lt $($config.UserEventCount)) {
@@ -651,19 +650,16 @@ function Get-Events {
     }
     # Provide option to create a new event
     Add-Event -n "+new event" -i "_create"
-    # Always provide option to change events
-    #Add-Choice -k "EVENT" -d "Create/Switch/Join Event" -c $($config.GoogleEventName) -f "Set-Event" -todo
-    #Add-Choice -k "RESETPW" -d "Reset instructor email" -c $config.InstructorEmail -f "Reset-Password"
     $eventDefault = $eventList | Where-Object default -eq $true
     if ($eventDefault.count -eq 1) {
-        #Send-Update -t 0 -c "Setting event with default:  $eventDefault"
-        #Set-Event -p $eventDefault
+        Send-Update -t 0 -c "Default event found"
         Set-Prefs -k "GoogleEventName" -v $eventDefault.name
         Set-Prefs -k "GoogleEventId" -v $eventDefault.id
         Set-Prefs -k "GoogleEventEmail" -v $eventDefault.email
         Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
     }
     else {
+        Send-Update -t 0 -c "NO event found- removing preferences"
         Set-Prefs -k "GoogleEventName" 
         Set-Prefs -k "GoogleEventId"
         Set-Prefs -k "GoogleEventEmail"
@@ -689,22 +685,8 @@ function Set-Event {
     }
     else {
         # Cache choice details
-        #Set-Prefs -k "GoogleEventName" -v $eventSelected.name
         Set-Prefs -k "GoogleEventId" -v $eventSelected.id
         Get-Events
-        #Set-Prefs -k "GoogleEventEmail" -v $eventSelected.email
-        # And reset harness config assuming this new event uses a different account and not preset
-        # if (-not $preset) {
-        #     Set-Prefs -k "HarnessAccount"
-        #     Set-Prefs -k "HarnessAccountId"
-        #     Set-Prefs -k "HarnessPAT"
-        # }
-        # $members = Get-GroupMembers -s
-        # Add option to change event later
-        # if ($members.memberCount -gt 0) {
-        #     $existingUsers = "$($members.memberCount) attendee(s)"
-        # }
-        # Get-HarnessConfiguration
     }
 }
 function Save-EventDetails {
@@ -1396,12 +1378,13 @@ function Get-GroupKey {
 # Harness Functions
 function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
-    # It will enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
-    # It will add filters listed at gs://harnesseventsdata/config/filters.json
-    # Then enable google-auth in oauth settings and create an attendee role
-    # It will load all secrets starting with 'org' from google secret manager
-    # It will load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
-    # It will add the organization for the chosen event, add projects for everyone, and add users to the attendee role
+    # It will:
+    #   enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
+    #   add filters listed at gs://harnesseventsdata/config/filters.json
+    #   enable google-auth in oauth settings and create an attendee role
+    #   load all secrets starting with 'org' from google secret manager
+    #   load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
+    #   add the organization for the chosen event, add projects for everyone, and add users to the attendee role
     $attendees = Get-GroupMembers
     # Add needed flags
     $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
@@ -1493,84 +1476,30 @@ function Remove-HarnessEventDetails {
     # This worked- remove cached details for event
     return $true
 }
-function Set-HarnessConfigurationOLD {
-    if ($config.HarnessPAT) {
-        $response = Test-Connectivity -harnessToken $config.HarnessPAT
-        if ($response) {
-            Send-Update -t 0 -c "Cached token worked"
-            $goodToken = $config.HarnessPAT
-        }
-    }
-    while (-not $goodToken) {
-        #Show list of cached tokens
-        $config.HarnessList | Format-Table -Property option, HarnessAccount, HarnessAccountId
-        if (-not $config.HarnessList) {
-            $accountChoice = "a"
-        }
-        else {
-            $accountChoice = Read-Host "Select cached token or 'a' to add new token"
-        }
-        if ($accountChoice.tolower() -eq "a") {
-            # Offer option to add new token
-            $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token or <enter> to abort"
-        }
-        else {
-            # Or use a locally cached token
-            $newToken = $config.HarnessList | Where-Object { $_.option -eq $accountChoice } | select-object -expandproperty HarnessPAT
-        }
-        if (!$newToken) {
-            write-host -ForegroundColor red "`r`nFine don't pick a valid thing, GOSH!" 
-            return
-        }
-        $checkToken = $newToken.split(".")
-        # Check token for valid format
-        if ($checkToken[0] -eq "pat" -and $checkToken.length -eq 4) {
-            Send-Update -t 1 -c "Valid token format. Checking connectivity..."
-            $response = Test-Connectivity -harnessToken $newToken
-            if ($response) {
-                $goodToken = $newToken
-                # Clear cache so if this is new account projects will be added
-                Set-Prefs -k "projectsCreated"
-            }
-            else {
-                Send-Update -t 2 -c "That token looked valid, but was rejected by the API. Please retry."
-            }
-        }
-        else {
-            Send-Update -t 2 -c "Bruh, token should start with 'pat' and have 4 sections separated by periods.  Please retry."
-        }
-    }
-    Save-HarnessConfig
-}
 function Set-HarnessConfiguration {
-    # if ($config.HarnessPAT) {
-    #     $response = Test-Connectivity -harnessToken $config.HarnessPAT
-    #     if ($response) {
-    #         Send-Update -t 0 -c "Cached token worked"
-    #         $goodToken = $config.HarnessPAT
-    #     }
-    # }
     while (-not $goodToken) {
         #Show list of cached tokens
-        $accountOptions = $config.HarnessList
-        
+        $accountOptions = $config.HarnessList ?? @()
+        $accountOptions += [PSCustomObject]@{"option" = "a";"HarnessAccount" = "<add a new harness account admin token>" }
+        $accountOptions += [PSCustomObject]@{"option" = "c";"HarnessAccount" = "<use harnessevents community account>" }        
         $accountOptions | Format-Table -Property option, HarnessAccount, HarnessAccountId
-        if (-not $config.HarnessList) {
-            $accountChoice = "a"
-        }
-        else {
-            $accountChoice = Read-Host "Select cached token or 'a' to add new token"
+        $accountChoice = Read-Host "Which account to use for the event <enter> to abort"
+        if (-not $accountChoice) {
+            return
         }
         if ($accountChoice.tolower() -eq "a") {
             # Offer option to add new token
             $newToken = Read-Host -prompt "Please enter a Harness *Account admin* token or <enter> to abort"
+        }
+        elseif ($accountChoice.tolower() -eq "c") {
+            $newToken = $config.HarnessEventsPAT
         }
         else {
             # Or use a locally cached token
             $newToken = $config.HarnessList | Where-Object { $_.option -eq $accountChoice } | select-object -expandproperty HarnessPAT
         }
         if (!$newToken) {
-            write-host -ForegroundColor red "`r`nFine don't pick a valid thing, GOSH!" 
+            write-host -ForegroundColor red "`r`nHey there, could you try picking a valid option?"
             return
         }
         $checkToken = $newToken.split(".")
@@ -1580,8 +1509,6 @@ function Set-HarnessConfiguration {
             $response = Test-Connectivity -harnessToken $newToken
             if ($response) {
                 $goodToken = $newToken
-                # Clear cache so if this is new account projects will be added
-                Set-Prefs -k "projectsCreated"
             }
             else {
                 Send-Update -t 2 -c "That token looked valid, but was rejected by the API. Please retry."
@@ -1592,10 +1519,13 @@ function Set-HarnessConfiguration {
         }
     }
     Save-HarnessConfig
+    Get-Events
 }
 function Save-HarnessConfig {
     if ($config.HarnessList) {
+        Send-Update -t 0 -c "Using existing history. length is: $($oldHistory.count)"
         $oldHistory = $config.HarnessList | Sort-object -property option
+        $oldHistory
     }
     else {
         $oldHistory = @()
@@ -1610,14 +1540,16 @@ function Save-HarnessConfig {
     foreach ($item in $oldHistory) {
         $newItem = $item.HarnessAccount -ne $config.HarnessAccount
         if ($counter -lt 8 -and $newItem) {
-            $newHistory += @{
+            $newHistory += [PSCustomObject]@{
                 "option"           = $counter
                 "HarnessAccount"   = $item.HarnessAccount
                 "HarnessAccountId" = $item.HarnessAccountId
                 "HarnessPAT"       = $item.HarnessPAT 
             }
+            Send-Update -t 0 -c "$counter : $($item.HarnessAcount)"
+            $counter++
         }
-        $counter++
+        
     }
     Set-Prefs -k "HarnessList" -v $newHistory
 }
@@ -2743,14 +2675,13 @@ function New-AWSProject {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
-# Options for automated execution
+# Automated options
 Get-DeployTest
 Get-RemoveTest
 Get-JanitorMode
-# Normal, looped operation for users below
+# Normal, looped operation for general use
 Get-GoogleLogin
 while ($true) {
-    #Get-Events -preset
     # Offer Options to configure event
     Add-Choice -k "EVENT" -d "Create/Switch Event" -c $config.GoogleEventName -f "Set-Event" -todo
     Add-Choice -k "HARNESSCFG" -d "Add/Switch Harness Account" -c $config.HarnessAccount -f "Set-HarnessConfiguration" -t
@@ -2758,7 +2689,7 @@ while ($true) {
     Add-Choice -k "AZURECONFIG" -d "Enable/Disable Azure classroom" -c $config.UseAwsClassroom -f "Set-Azure-Project"
     Add-Choice -k "AWSCONFIG" -d "Enable/Disable AWS classroom" -c $config.UseAzureClassroom -f "Set-AWS-Project"
     Add-Choice -k "ADDUSERS" -d "Add event attendees" -c $config.UserEventCount -f "Set-EventUsers" -t
-    # Options to setup or remove choices
+    # Take action based on choices
     Add-Choice -k "GETDETAILS" -d "Sync/Update all event details" -f "Sync-Event"
     Add-Choice -k "DELEVENT" -d "Delete event & all classrooms" -f "Remove-Event"
     Get-Choice
