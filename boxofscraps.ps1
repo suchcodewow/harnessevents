@@ -1372,6 +1372,7 @@ function Sync-Event {
     else {
         Remove-GCP-Project
     }
+    Add-Variables
     Save-EventDetails
 }
 
@@ -1848,7 +1849,7 @@ function Add-OrgYaml {
         # Load all remaining lines except the ones updated above.
         foreach ($line in $template | Select-Object -skip 1) {
             $addThisLine = $true
-            # Ignore any of these situations- it was already set above
+            # Ignore any of these situations
             if ($line.length -ge 7 -and $line.substring(0,7) -eq "  name:") {
                 $addThisLine = $false
             }
@@ -2121,6 +2122,63 @@ function Add-SecretJson {
         'x-api-key' = "pat.fjf_VfuITK2bBrMLg5xV7g.685eb2c56cbe10049b61e958.zBDRQLxrtoOtPkQE9qHy"
     }
     Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
+}
+function Add-Variables {
+    # Define the variables here that we want to use
+    $variables = @(
+        @{"name" = "google_project"; "value" = $config.GoogleProjectId },
+        @{"name" = "google_region";"value" = $config.GoogleRegion },
+        @{"name" = "google_resource_id";"value" = $config.GoogleResourceID }
+    )
+    # Install all variables at the org level.
+    foreach ($variable in $variables) {
+        $uri = "https://app.harness.io/ng/api/variables?accountIdentifier=$($config.HarnessAccountId)"
+        $body = @{
+            variable = @{
+                name          = $variable.name.replace("_"," ")
+                identifier    = $variable.name
+                orgIdentifier = $($config.HarnessOrg)
+                description   = ""
+                type          = "String"
+                spec          = @{
+                    valueType     = "FIXED"
+                    fixedValue    = $variable.value ?? "replaceme"
+                    allowedValues = @()
+                    defaultValue  = ""
+                }
+            }
+        } | ConvertTo-Json -Depth 5
+        Send-Update -t 1 -c "Adding/Updating variable $($variable.name)"
+        Try {
+            Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $HarnessHeaders | Out-null
+        }
+        Catch {
+            # Generates a System.Management.Automation.ErrorRecord
+            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                $errorResponse = $_ | Convertfrom-Json
+                if ($errorResponse.message.contains("already exists")) {
+                    Send-Update -t 0 -c "Template: $templateId already exists."
+                }
+                else {
+                    Send-Update -t 2 -c "Failed to create variable: $($variable.name)"
+                    Send-Update -t 0 -c "URI: $uri"
+                    Send-Update -t 0 -c "ContentType: $contentType"
+                    Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                    Send-Update -t 0 -c "body:"
+                    Send-Update -t 0 -c $body
+                }  
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $contentType"
+                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
+            }
+        }
+    }
+
 }
 function Clear-OrgSecrets {
     # Set all Harness provided secrets to '123' after event
@@ -2533,30 +2591,45 @@ function New-AZResourceGroup {
     ##TODO Azure Resource Group Functions
     Send-Update -t 1 -c "Sorry, this is not built yet!"
 }
-function New-GCP-Cluster {
-    # Check if kubernetes cluster exists
+function New-GCP-Resources {
+    # Create unique Google Resource ID (this will be harnessevents normally, but creates a unique ID if shared environment)
     if ($googleCloudProjectOverride) {
         # We're building this cluster in a potentially shared space- use the current user as an indentifier
         $cleanIdentifier = "-$($config.GoogleUser.split('@')[0].replace('.',''))"
+        $clusterRegion = "us-central1"
     }
-    $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter=name=harnessevent$($cleanIdentifier) --format=json  --verbosity=error --project=$($config.GoogleProjectId)" | Convertfrom-Json
-    if (-not $clusterExists) {
+    else {
         $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)' --verbosity=error --project=$($config.GoogleProjectId)"
-        Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create harnessevent$cleanIdentifier -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes cloud-platform  --project=$($config.GoogleProjectid)"
-        Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials harnessevent$cleanIdentifier --zone=$clusterRegion  --project=$($config.GoogleProjectId)"  
-        $clusterExists = Send-Update -t 1 -c "Confirm cluster exists" -r "gcloud container clusters list --filter=name=harnessevent$($cleanIdentifier) --format=json --project=$($config.GoogleProjectId)" | Convertfrom-Json
+    }
+    # Save the identifier used here for fun activities later
+    Set-Prefs -k "GoogleResourceID" -v "harnessevent$cleanIdentifier"
+    # Create cluster if needed
+    $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter=name=$($config.GoogleResourceID) --format=json  --verbosity=error --project=$($config.GoogleProjectId)" | Convertfrom-Json
+    if (-not $clusterExists) {
+        Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create $($config.GoogleResourceID) -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes cloud-platform  --project=$($config.GoogleProjectid)"
+        $clusterExists = Send-Update -t 1 -c "Confirm cluster exists" -r "gcloud container clusters list --filter=name=$($config.GoogleResourceID) --format=json --project=$($config.GoogleProjectId)" | Convertfrom-Json
         if (-not $clusterExists) {
             Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHYYYYYY GOOGLE?"
             exit
         }
     }
+    Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials $($config.GoogleResourceID) --zone=$clusterRegion  --project=$($config.GoogleProjectId)"  
     Add-Delegate -delegatePrefix "gcp"
-    
+    # Create google artifact registry if needed
+    $registryExists = Send-Update -t 1 -c "Check if Artifact Registry exists" -r "gcloud artifacts repositories list --filter=$($config.GoogleResourceID) --project=$($config.GoogleProjectId) --format=json" | Convertfrom-Json
+    if ($registryExists) {
+        Send-Update -t 0 -c "Registry exists- skipping create"
+    }
+    else {
+        # Create Google artifact registry
+        Send-Update -t 1 -c "Create google artifact registry" -r "gcloud artifacts repositories create $($config.GoogleResourceID) --repository-format=docker --location=$($config.GoogleRegion) --project=$($config.GoogleProjectId)"
+    }
 }
 function New-GCP-Project {
     if ($googleCloudProjectOverride) {
         Set-Prefs -k "GoogleProjectId" -v $googleCloudProjectOverride
         Set-Prefs -k "GoogleProject" -v "Command Line Override"
+        Set-Prefs -k "GoogleRegion" -v "us-central1"
         $projectCheck = Send-Update -t 1 -c "Check Project Override availability" -r "gcloud projects list --filter='id:$($config.GoogleProjectId)' --format=json" | convertfrom-json
     }
     else {
@@ -2617,7 +2690,7 @@ function New-GCP-Project {
             Start-Sleep -s 2
         } until (-not $neededAPis)
     }
-    New-GCP-Cluster
+    New-GCP-Resources
 }
 function Remove-GCP-Project {
     # Check if project exists still
