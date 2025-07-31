@@ -2,13 +2,15 @@
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
 param (
     [switch] $cloudCommands, # enable to show commands
-    [string] $headless, #deploy automatically with a given username
     [string] $googleCloudProjectOverride, #override project creation to use a specific project
+    [string] $headless, #deploy automatically with a given username
     [switch] $help, # show other command options and exit
+    [string] $instructorEmail, # instructor email to use for 
     [switch] $janitormode, # sweep sweep!
     [switch] $logReset, # enable to reset log between runs
     [switch] $removeauto, #remove all elements based on current conf file
-    [switch] $verbose # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
+    [switch] $verbose, # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
+    [int] $userCount # use with headless mode to specify number of attendees (default is 3)
 )
 
 # Core Functions
@@ -444,13 +446,13 @@ function Test-PreFlight {
 }
 
 #Automated Functions
-function Get-Headless {
+function Get-HeadlessMode {
     # Run a headless automate deploy if cmd line switch used
     # The process expects `gcloud auth activate-service-account` was already run with clousdk service account
     if (-not $headless) {
         return
     }
-    Send-Update -t 1 -c "Running Deployment Test"
+    Send-Update -t 1 -c "Running Headlesse Deployment"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
     $currentUser = gcloud auth list --format='value(account)'
@@ -473,7 +475,7 @@ function Get-JanitorMode {
 
     SEnd-Update -t 1 -c "End event cleanup"
 }
-function Get-removeauto {
+function Get-RemoveAuto {
     # Run removeauto if cmd line switch used
     if (-not $removeauto) {
         return
@@ -2748,8 +2750,8 @@ function Set-GCP-Project {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 # Automated options
-Get-headless
-Get-removeauto
+Get-HeadlessMode
+Get-RemoveAuto
 Get-JanitorMode
 # Normal, looped operation for general use
 Get-GoogleLogin
