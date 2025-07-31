@@ -2,12 +2,12 @@
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
 param (
     [switch] $cloudCommands, # enable to show commands
-    [switch] $deploytest, #test deployment with standard settings
+    [string] $headless, #deploy automatically with a given username
     [string] $googleCloudProjectOverride, #override project creation to use a specific project
     [switch] $help, # show other command options and exit
     [switch] $janitormode, # sweep sweep!
     [switch] $logReset, # enable to reset log between runs
-    [switch] $removetest, #test removal of all elements
+    [switch] $removeauto, #remove all elements based on current conf file
     [switch] $verbose # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
 )
 
@@ -444,10 +444,10 @@ function Test-PreFlight {
 }
 
 #Automated Functions
-function Get-DeployTest {
-    # Run a deploytest if cmd line switch used
+function Get-Headless {
+    # Run a headless automate deploy if cmd line switch used
     # The process expects `gcloud auth activate-service-account` was already run with clousdk service account
-    if (-not $deploytest) {
+    if (-not $headless) {
         return
     }
     Send-Update -t 1 -c "Running Deployment Test"
@@ -456,7 +456,7 @@ function Get-DeployTest {
     $currentUser = gcloud auth list --format='value(account)'
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-    Set-Prefs -k "DeployTest" -v $true
+    Set-Prefs -k "headless" -v $true
     Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
     Set-Prefs -k "UserEventCount" -v 3
     New-Event
@@ -473,15 +473,15 @@ function Get-JanitorMode {
 
     SEnd-Update -t 1 -c "End event cleanup"
 }
-function Get-RemoveTest {
-    # Run removetest if cmd line switch used
-    if (-not $removetest) {
+function Get-removeauto {
+    # Run removeauto if cmd line switch used
+    if (-not $removeauto) {
         return
     }
     Send-Update -t 1 -c "Running event removal test"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
-    Set-Prefs -k "RemoveTest" -v $true
+    Set-Prefs -k "removeauto" -v $true
     Remove-Event
     Send-Update -t 1 -c "End Removal Test"
     exit
@@ -740,7 +740,7 @@ function Get-GoogleAccessToken {
 }
 function Get-GoogleAppToken {
     # Bypass this is running as a deployment test - it won't have the ability to write out a google sheet
-    if ($config.DeployTest) {
+    if ($config.headless) {
         return
     }
     if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
@@ -883,9 +883,9 @@ function New-Event {
     Get-GoogleAccessToken
     while (-not $nameselected) {
         # If this is an automated deployment test, use presets
-        if ($config.DeployTest) {
-            Send-Update -t 1 -c "Deployment Test running using name: DeployTest"
-            $newEvent = "DeployTest"
+        if ($config.headless) {
+            Send-Update -t 1 -c "Deployment Test running using name: headless"
+            $newEvent = "headless"
         }
         else {
             $newEvent = read-host -prompt "Name for new event? (lower characters only) <enter> to abort"
@@ -922,7 +922,7 @@ function New-Event {
         }
         else {
             Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
-            if ($config.DeployTest) {
+            if ($config.headless) {
                 # Need to get this even if about to fail so removal works
                 $eventId = Get-GroupKey -g $newEmail
                 Set-Prefs -k "GoogleEventId" -v $eventId
@@ -1007,7 +1007,7 @@ function Remove-Event {
     # It will delete the event email (completely eliminating the event)
     # It will set all known secrets to a value of 123
     # It will set the "go forward" feature flags as shown in featureflagend.json
-    if ($config.DeployTest) {
+    if ($config.headless) {
         Send-Update -t 1 -c "Bypassing event delete confirmation"
     }
     else {
@@ -1073,7 +1073,7 @@ function Remove-Event {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
-    if ($config.RemoveTest) {
+    if ($config.removeauto) {
         Remove-Organization
     }
     Set-Prefs -k "GoogleEventEmail"
@@ -2748,8 +2748,8 @@ function Set-GCP-Project {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 # Automated options
-Get-DeployTest
-Get-RemoveTest
+Get-headless
+Get-removeauto
 Get-JanitorMode
 # Normal, looped operation for general use
 Get-GoogleLogin
