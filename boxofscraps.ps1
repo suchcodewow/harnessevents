@@ -2591,40 +2591,6 @@ function New-AZResourceGroup {
     ##TODO Azure Resource Group Functions
     Send-Update -t 1 -c "Sorry, this is not built yet!"
 }
-function New-GCP-Resources {
-    # Create unique Google Resource ID (this will be harnessevents normally, but creates a unique ID if shared environment)
-    if ($googleCloudProjectOverride) {
-        # We're building this cluster in a potentially shared space- use the current user as an indentifier
-        $cleanIdentifier = "-$($config.GoogleUser.split('@')[0].replace('.',''))"
-        $clusterRegion = "us-central1"
-    }
-    else {
-        $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)' --verbosity=error --project=$($config.GoogleProjectId)"
-    }
-    # Save the identifier used here for fun activities later
-    Set-Prefs -k "GoogleResourceID" -v "harnessevent$cleanIdentifier"
-    # Create cluster if needed
-    $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter=name=$($config.GoogleResourceID) --format=json  --verbosity=error --project=$($config.GoogleProjectId)" | Convertfrom-Json
-    if (-not $clusterExists) {
-        Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create $($config.GoogleResourceID) -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes cloud-platform  --project=$($config.GoogleProjectid)"
-        $clusterExists = Send-Update -t 1 -c "Confirm cluster exists" -r "gcloud container clusters list --filter=name=$($config.GoogleResourceID) --format=json --project=$($config.GoogleProjectId)" | Convertfrom-Json
-        if (-not $clusterExists) {
-            Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHYYYYYY GOOGLE?"
-            exit
-        }
-    }
-    Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials $($config.GoogleResourceID) --zone=$clusterRegion  --project=$($config.GoogleProjectId)"  
-    Add-Delegate -delegatePrefix "gcp"
-    # Create google artifact registry if needed
-    $registryExists = Send-Update -t 1 -c "Check if Artifact Registry exists" -r "gcloud artifacts repositories list --filter=$($config.GoogleResourceID) --project=$($config.GoogleProjectId) --format=json" | Convertfrom-Json
-    if ($registryExists) {
-        Send-Update -t 0 -c "Registry exists- skipping create"
-    }
-    else {
-        # Create Google artifact registry
-        Send-Update -t 1 -c "Create google artifact registry" -r "gcloud artifacts repositories create $($config.GoogleResourceID) --repository-format=docker --location=$($config.GoogleRegion) --project=$($config.GoogleProjectId)"
-    }
-}
 function New-GCP-Project {
     if ($googleCloudProjectOverride) {
         Set-Prefs -k "GoogleProjectId" -v $googleCloudProjectOverride
@@ -2691,6 +2657,41 @@ function New-GCP-Project {
         } until (-not $neededAPis)
     }
     New-GCP-Resources
+}
+function New-GCP-Resources {
+    # Create unique Google Resource ID (this will be harnessevents normally, but creates a unique ID if shared environment)
+    if ($googleCloudProjectOverride) {
+        # We're building this cluster in a potentially shared space- use the current user as an indentifier
+        $cleanIdentifier = "-$($config.GoogleUser.split('@')[0].replace('.',''))"
+        $clusterRegion = "us-central1"
+    }
+    else {
+        $clusterRegion = Send-Update -t 1 -c "Getting first available region" -r "gcloud compute regions list --filter='name:us-*' --limit=1 --format='value(NAME)' --verbosity=error --project=$($config.GoogleProjectId)"
+    }
+    # Save the identifier/region used here for fun activities later
+    Set-Prefs -k "GoogleResourceID" -v "harnessevent$cleanIdentifier"
+    Set-Prefs -k "GoogleRegion" -v "$clusterRegion"
+    # Create cluster if needed
+    $clusterExists = Send-Update -t 1 -c "Check for Google harnessevent cluster" -r "gcloud container clusters list --filter=name=$($config.GoogleResourceID) --format=json  --verbosity=error --project=$($config.GoogleProjectId)" | Convertfrom-Json
+    if (-not $clusterExists) {
+        Send-Update -t 1 -c "Create kubernetes cluster" -r "gcloud container clusters create $($config.GoogleResourceID) -m e2-standard-4 --num-nodes=1 --zone=$clusterRegion --no-enable-insecure-kubelet-readonly-port --scopes=cloud-platform  --project=$($config.GoogleProjectid)"
+        $clusterExists = Send-Update -t 1 -c "Confirm cluster exists" -r "gcloud container clusters list --filter=name=$($config.GoogleResourceID) --format=json --project=$($config.GoogleProjectId)" | Convertfrom-Json
+        if (-not $clusterExists) {
+            Send-Update -t 2 -c "Attempted to create google kubernetes cluster it failed.  IT FAILED SO BAD. WHY?  WHYYYYYY GOOGLE?"
+            exit
+        }
+    }
+    Send-Update -t 1 -o -c "Retrieve kubernetes credentials" -r "gcloud container clusters get-credentials $($config.GoogleResourceID) --zone=$clusterRegion  --project=$($config.GoogleProjectId)"  
+    Add-Delegate -delegatePrefix "gcp"
+    # Create google artifact registry if needed
+    $registryExists = Send-Update -t 1 -c "Check if Artifact Registry exists" -r "gcloud artifacts repositories list --filter=$($config.GoogleResourceID) --project=$($config.GoogleProjectId) --format=json" | Convertfrom-Json
+    if ($registryExists) {
+        Send-Update -t 0 -c "Registry exists- skipping create"
+    }
+    else {
+        # Create Google artifact registry
+        Send-Update -t 1 -c "Create google artifact registry" -r "gcloud artifacts repositories create $($config.GoogleResourceID) --repository-format=docker --location=$($config.GoogleRegion) --project=$($config.GoogleProjectId)"
+    }
 }
 function Remove-GCP-Project {
     # Check if project exists still
