@@ -1,7 +1,7 @@
+.vscode/*
 *.conf
 *.log
 *.yaml
 *.json
 *.csv
 test*.*
-.vscode/
