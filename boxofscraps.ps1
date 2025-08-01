@@ -1,16 +1,20 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
 param (
-    [switch] $cloudCommands, # enable to show commands
-    [string] $googleCloudProjectOverride, #override project creation to use a specific project
-    [string] $headless, #deploy automatically with a given username
-    [switch] $help, # show other command options and exit
-    [string] $instructorEmail, # instructor email to use for 
-    [switch] $janitormode, # sweep sweep!
-    [switch] $logReset, # enable to reset log between runs
-    [switch] $removeauto, #remove all elements based on current conf file
-    [switch] $verbose, # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
-    [int] $userCount # use with headless mode to specify number of attendees (default is 3)
+    [switch] $aws,                          # enable aws classroom (optional for headless mode)
+    [switch] $azure,                        # enable azure classroom (optional for headless mode)
+    [switch] $cloudCommands,                # enable to show commands
+    [switch] $gcp,                          # enable gcp classroom (optional for headless mode)
+    [string] $googleCloudProjectOverride,   # override project creation to use a specific project
+    [switch] $headless,                     # deploy automatically. all [HEADLESS MODE] parameters become mandatory
+    [string] $eventName,                    # [HEADLESS MODE] specifiy event name
+    [string] $instructorName,               # [HEADLESS MODE] specify instructorName
+    [switch] $help,                         # show other command options and exit
+    [switch] $janitormode,                  # sweep sweep!
+    [switch] $logReset,                     # enable to reset log between runs
+    [switch] $removeauto,                   # remove all elements based on current conf file
+    [switch] $verbose,                      # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
+    [int] $userCount                        # [HEADLESS MODE] specify number of attendees (default is 3)
 )
 
 # Core Functions
@@ -452,19 +456,48 @@ function Get-HeadlessMode {
     if (-not $headless) {
         return
     }
-    Send-Update -t 1 -c "Running Headlesse Deployment"
+    Set-Prefs -k "headless" -v $true
+    Send-Update -t 1 -c "Running Headless Deployment"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
-    $currentUser = gcloud auth list --format='value(account)'
+    if ($instructorName) {
+        $currentUser = $instructorName
+    }
+    else {
+        $currentUser = gcloud auth list --format='value(account)'
+    }
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-    Set-Prefs -k "headless" -v $true
-    Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
-    Set-Prefs -k "UserEventCount" -v 3
+    if ($gcp) {
+        Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
+    }
+    if ($aws) {
+        Set-Prefs -k "UseAwsClassroom" -v "ENABLED"
+    }
+    if ($azure) {
+        Set-Prefs -k "UseAzureClassroom" -v "ENABLED"
+    }
+    if ($userCount) {
+        Set-Prefs -k "UserEventCount" -v $userCount
+    }
+    else {
+        Set-Prefs -k "UserEventCount" -v 3
+    }
+    if ($eventName) {
+        Set-Prefs -k "EventName" -v $eventName
+    }
+    else {
+        Set-Prefs -k "EventName" -v "deploytest"
+    }
+    # Currently the only required item is some kind of username
+    if (-not $currentUser) {
+        Send-Update -t 2 -c "No instructor email provided.  Is it illegal in 23 US states to continue without one.  Nice try though."
+        exit
+    }
     New-Event
     Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
     Sync-Event
-    Send-Update -t 1 -c "End Deployment Test"
+    Send-Update -t 1 -c "End Headless Mode"
     exit
 }
 function Get-JanitorMode {
@@ -885,9 +918,8 @@ function New-Event {
     Get-GoogleAccessToken
     while (-not $nameselected) {
         # If this is an automated deployment test, use presets
-        if ($config.headless) {
-            Send-Update -t 1 -c "Deployment Test running using name: headless"
-            $newEvent = "headless"
+        if ($config.EventName) {
+            $newEvent = $config.EventName
         }
         else {
             $newEvent = read-host -prompt "Name for new event? (lower characters only) <enter> to abort"
@@ -923,14 +955,17 @@ function New-Event {
             $nameselected = $newEmail
         }
         else {
-            Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
-            if ($config.headless) {
+            Send-Update -t 2 -c "Event email already used: $newEmail"
+            if ($config.EventName -eq "deploytest") {
                 # Need to get this even if about to fail so removal works
                 $eventId = Get-GroupKey -g $newEmail
                 Set-Prefs -k "GoogleEventId" -v $eventId
                 Set-Prefs -k "GoogleEventEmail" -v $newEmail
                 Send-Update -t 2 -c "Previous automated test did not successfully delete event email: $newEmail"
                 Exit 1
+            }
+            if ($config.EventName) {
+                $nameselected = $newEmail
             }
         }
     }
@@ -1591,7 +1626,7 @@ function Add-HarnessEventDetails {
     #   load all secrets starting with 'org' from google secret manager
     #   load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
     #   add the organization for the chosen event, add projects for everyone, and add users to the attendee role
-    $attendees = Get-GroupMembers
+
     # Add needed flags
     $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
     $currentFlags = Get-FeatureFlagStatus
@@ -1621,6 +1656,8 @@ function Add-HarnessEventDetails {
     Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgEnvironments/*.yaml"
     Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgTemplates/*.yaml"
     Add-AttendeeRole
+    $attendees = Get-GroupMembers
+    $attendees += [PSCustomObject]@{"email" = $config.GoogleUser; "role" = "OWNER" }
     foreach ($attendee in $attendees) {
         if ($attendee.role -eq "OWNER") {
             # if user is an owner, they are a Harness SE- so grant account admin
@@ -1633,7 +1670,6 @@ function Add-HarnessEventDetails {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    #Add-Choice -k "HARNESSINIT" -d "Sync Harness with Attendee List" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
 }
 function Add-HarnessUser {
     [CmdletBinding()]
