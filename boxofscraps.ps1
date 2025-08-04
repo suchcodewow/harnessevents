@@ -1,14 +1,20 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
 param (
-    [switch] $cloudCommands, # enable to show commands
-    [switch] $deploytest, #test deployment with standard settings
-    [string] $googleCloudProjectOverride, #override project creation to use a specific project
-    [switch] $help, # show other command options and exit
-    [switch] $janitormode, # sweep sweep!
-    [switch] $logReset, # enable to reset log between runs
-    [switch] $removetest, #test removal of all elements
-    [switch] $verbose # default output level is 1 (info/errors), use -v for level 0 (debug/info/errors)
+    [switch] $aws,                          # enable aws classroom (optional for headless mode)
+    [switch] $azure,                        # enable azure classroom (optional for headless mode)
+    [switch] $cloudCommands,                # enable to show commands
+    [switch] $gcp,                          # enable gcp classroom (optional for headless mode)
+    [string] $googleCloudProjectOverride,   # override project creation to use a specific project
+    [switch] $headless,                     # deploy automatically. all [HEADLESS MODE] parameters become mandatory
+    [string] $eventName,                    # [HEADLESS MODE] specifiy event name
+    [string] $instructorName,               # [HEADLESS MODE] specify instructorName
+    [switch] $help,                         # show other command options and exit
+    [switch] $janitormode,                  # sweep sweep!
+    [switch] $logReset,                     # enable to reset log between runs
+    [switch] $removeauto,                   # remove all elements based on current conf file
+    [switch] $verbose,                      # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
+    [int] $userCount                        # [HEADLESS MODE] specify number of attendees (default is 3)
 )
 
 # Core Functions
@@ -444,25 +450,54 @@ function Test-PreFlight {
 }
 
 #Automated Functions
-function Get-DeployTest {
-    # Run a deploytest if cmd line switch used
+function Get-HeadlessMode {
+    # Run a headless automate deploy if cmd line switch used
     # The process expects `gcloud auth activate-service-account` was already run with clousdk service account
-    if (-not $deploytest) {
+    if (-not $headless) {
         return
     }
-    Send-Update -t 1 -c "Running Deployment Test"
+    Set-Prefs -k "headless" -v $true
+    Send-Update -t 1 -c "Running Headless Deployment"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
-    $currentUser = gcloud auth list --format='value(account)'
+    if ($instructorName) {
+        $currentUser = $instructorName
+    }
+    else {
+        $currentUser = gcloud auth list --format='value(account)'
+    }
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-    Set-Prefs -k "DeployTest" -v $true
-    Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
-    Set-Prefs -k "UserEventCount" -v 3
+    if ($gcp) {
+        Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
+    }
+    if ($aws) {
+        Set-Prefs -k "UseAwsClassroom" -v "ENABLED"
+    }
+    if ($azure) {
+        Set-Prefs -k "UseAzureClassroom" -v "ENABLED"
+    }
+    if ($userCount) {
+        Set-Prefs -k "UserEventCount" -v $userCount
+    }
+    else {
+        Set-Prefs -k "UserEventCount" -v 3
+    }
+    if ($eventName) {
+        Set-Prefs -k "EventName" -v $eventName
+    }
+    else {
+        Set-Prefs -k "EventName" -v "deploytest"
+    }
+    # Currently the only required item is some kind of username
+    if (-not $currentUser) {
+        Send-Update -t 2 -c "No instructor email provided.  Is it illegal in 23 US states to continue without one.  Nice try though."
+        exit
+    }
     New-Event
     Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
     Sync-Event
-    Send-Update -t 1 -c "End Deployment Test"
+    Send-Update -t 1 -c "End Headless Mode"
     exit
 }
 function Get-JanitorMode {
@@ -473,15 +508,15 @@ function Get-JanitorMode {
 
     SEnd-Update -t 1 -c "End event cleanup"
 }
-function Get-RemoveTest {
-    # Run removetest if cmd line switch used
-    if (-not $removetest) {
+function Get-RemoveAuto {
+    # Run removeauto if cmd line switch used
+    if (-not $removeauto) {
         return
     }
     Send-Update -t 1 -c "Running event removal test"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
-    Set-Prefs -k "RemoveTest" -v $true
+    Set-Prefs -k "removeauto" -v $true
     Remove-Event
     Send-Update -t 1 -c "End Removal Test"
     exit
@@ -732,15 +767,78 @@ function Get-GoogleAccessToken {
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
-    Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    if (-not $headless) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
+    $credentialsJson = Get-Content 'harnessevents.json' -Raw | Convertfrom-Json
+    Set-Prefs -k "ServiceAccountEmail" -v $credentialsJson.client_email
+    $PrivateKey = $credentialsJson.private_key -replace '-----BEGIN PRIVATE KEY-----\n' -replace '\n-----END PRIVATE KEY-----\n' -replace '\n'
+    Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
     # Cleanup due to Google's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
 }
+function Get-GoogleApiAccessToken {
+    if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
+        # Check if token is over 50m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAppTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            $script:appHeaders = @{
+                "Authorization"       = "Bearer $($config.GoogleAppToken)"
+                "x-goog-user-project" = $($config.AdminProjectId)
+            }
+            Send-Update -t 0 -c "Google App Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google App Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
+    }
+    else {
+        Send-Update -t 1 -c "New token needed"
+    }
+    $PrivateKey = $config.ServiceAccountKey
+    $header = @{
+        alg = "RS256"
+        typ = "JWT"
+    }
+    $headerBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($header | ConvertTo-Json)))
+    $timestamp = [Math]::Round((Get-Date -UFormat %s))
+    $claimSet = @{
+        iss   = $config.ServiceAccountEmail
+        scope = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets"
+        aud   = "https://oauth2.googleapis.com/token"
+        exp   = $timestamp + 3600
+        iat   = $timestamp
+        # sub   = $TargetUserEmail
+    }
+    $claimSetBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($claimSet | ConvertTo-Json)))
+    $signatureInput = $headerBase64 + "." + $claimSetBase64
+    $signatureBytes = [System.Text.Encoding]::UTF8.GetBytes($signatureInput)
+    $privateKeyBytes = [System.Convert]::FromBase64String($PrivateKey)
+    $rsaProvider = [System.Security.Cryptography.RSA]::Create()
+    $bytesRead = $null
+    $rsaProvider.ImportPkcs8PrivateKey($privateKeyBytes, [ref]$bytesRead)
+    $signature = $rsaProvider.SignData($signatureBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    $signatureBase64 = [System.Convert]::ToBase64String($signature)
+    $jwt = $headerBase64 + "." + $claimSetBase64 + "." + $signatureBase64
+    $body = @{
+        grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        assertion  = $jwt
+    }
+    $response = Invoke-RestMethod -Uri "https://oauth2.googleapis.com/token" -Method POST -Body $body -ContentType "application/x-www-form-urlencoded"
+    $script:appHeaders = @{
+        Authorization         = 'Bearer {0}' -f $response.access_token
+        "x-goog-user-project" = $($config.AdminProjectId)
+    }
+    # Save valid token
+    Set-Prefs -k "GoogleAppToken" -v $response.access_token
+    Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
+}
 function Get-GoogleAppToken {
     # Bypass this is running as a deployment test - it won't have the ability to write out a google sheet
-    if ($config.DeployTest) {
+    if ($config.headless) {
         return
     }
     if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
@@ -883,9 +981,8 @@ function New-Event {
     Get-GoogleAccessToken
     while (-not $nameselected) {
         # If this is an automated deployment test, use presets
-        if ($config.DeployTest) {
-            Send-Update -t 1 -c "Deployment Test running using name: DeployTest"
-            $newEvent = "DeployTest"
+        if ($config.EventName) {
+            $newEvent = $config.EventName
         }
         else {
             $newEvent = read-host -prompt "Name for new event? (lower characters only) <enter> to abort"
@@ -921,14 +1018,17 @@ function New-Event {
             $nameselected = $newEmail
         }
         else {
-            Send-Update -t 2 -c "Sorry, event email already used: $newEmail"
-            if ($config.DeployTest) {
+            Send-Update -t 2 -c "Event email already used: $newEmail"
+            if ($config.EventName -eq "deploytest") {
                 # Need to get this even if about to fail so removal works
                 $eventId = Get-GroupKey -g $newEmail
                 Set-Prefs -k "GoogleEventId" -v $eventId
                 Set-Prefs -k "GoogleEventEmail" -v $newEmail
                 Send-Update -t 2 -c "Previous automated test did not successfully delete event email: $newEmail"
                 Exit 1
+            }
+            if ($config.EventName) {
+                $nameselected = $newEmail
             }
         }
     }
@@ -1007,7 +1107,7 @@ function Remove-Event {
     # It will delete the event email (completely eliminating the event)
     # It will set all known secrets to a value of 123
     # It will set the "go forward" feature flags as shown in featureflagend.json
-    if ($config.DeployTest) {
+    if ($config.headless) {
         Send-Update -t 1 -c "Bypassing event delete confirmation"
     }
     else {
@@ -1073,7 +1173,7 @@ function Remove-Event {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
-    if ($config.RemoveTest) {
+    if ($config.removeauto) {
         Remove-Organization
     }
     Set-Prefs -k "GoogleEventEmail"
@@ -1141,7 +1241,7 @@ function Save-EventDetails {
             $exportArray += ,@($member.role,$member.email)
         }
     }
-    # If there's a google project, generate links for it too
+    # If there's a google project, generate links for it
     if ($config.GoogleProjectId) {
         $exportArray += ,@(" ")
         $exportArray += ,@("Event Google Project Links")
@@ -1154,6 +1254,8 @@ function Save-EventDetails {
         $GoogleDetails += "Google Artifact Registry,https://console.cloud.google.com/artifacts?project=$($config.GoogleProjectId)`r`n"
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
+    # TODO Generate links for AWS
+    # TODO Generate links for Azure
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
@@ -1162,23 +1264,28 @@ function Save-EventDetails {
         Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
         return
     }
-    else {
-        $script:appHeaders = @{
-            "Authorization"       = "Bearer $($config.GoogleAppToken)"
-            "x-goog-user-project" = $($config.AdminProjectId)
-        }
-    }
+
+    # Get ID of HarnessEvents shared drive
+    $uriDrive = "https://www.googleapis.com/drive/v3/drives?supportsAllDrives=true&q=name='HarnessEvents'"
+    $drive = Invoke-RestMethod -Method 'GET' -uri $uriDrive -Headers $appHeaders -ContentType "application/json"
+    # Get ID of events folder
+    $uriEventsFolder = "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=$($drive.drives.id)&q=mimeType='application/vnd.google-apps.folder' and name='instructor classrooms'"
+    $eventsFolder = Invoke-RestMethod -Method 'GET' -uri $uriEventsFolder -Headers $appHeaders -ContentType "application/json"
     # Check if HarnessEvents folder already exists in current user's googley drive- create if needed
-    $uri = "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and name='HarnessEvents'"
+    $uri = "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=$($drive.drives.id)&q=mimeType='application/vnd.google-apps.folder' and name='" + $($config.GoogleUser) + "' and '" + $eventsFolder.files.id + "' in parents"
+    Send-Update -t 0 -c "uri to check for google folder: $uri"
     $response = invoke-restmethod -Method 'GET' -uri $uri -Headers $appHeaders -ContentType "application/json"
     if ($response.files) {
-        Send-Update -t 0 -c "HarnessEvents Google Drive folder already exists- skipping creation"
+        Send-Update -t 0 -c "$($config.GoogleUser) Google Drive folder already exists- skipping creation"
         $parentFolder = $response.files.id
     }
     else {
         $bodyFolder = @{
-            "name"     = "HarnessEvents"
+            "name"     = $config.GoogleUser
             "mimeType" = "application/vnd.google-apps.folder"
+            "parents"  = @(
+                $eventsFolder.files.id
+            )
         } | ConvertTo-Json
         $folder = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFolder -ContentType "application/json"
         Send-Update -t 0 -c "Created Google Drive folder: HarnessEvents"
@@ -1337,7 +1444,7 @@ function Set-EventUsers {
     Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Sync-Event {
-    Get-GoogleAppToken
+    Get-GoogleApiAccessToken
     Get-Events
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Please select a valid event"
@@ -1589,7 +1696,7 @@ function Add-HarnessEventDetails {
     #   load all secrets starting with 'org' from google secret manager
     #   load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
     #   add the organization for the chosen event, add projects for everyone, and add users to the attendee role
-    $attendees = Get-GroupMembers
+
     # Add needed flags
     $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
     $currentFlags = Get-FeatureFlagStatus
@@ -1619,6 +1726,8 @@ function Add-HarnessEventDetails {
     Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgEnvironments/*.yaml"
     Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgTemplates/*.yaml"
     Add-AttendeeRole
+    $attendees = Get-GroupMembers
+    $attendees += [PSCustomObject]@{"email" = $config.GoogleUser; "role" = "OWNER" }
     foreach ($attendee in $attendees) {
         if ($attendee.role -eq "OWNER") {
             # if user is an owner, they are a Harness SE- so grant account admin
@@ -1631,7 +1740,6 @@ function Add-HarnessEventDetails {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
-    #Add-Choice -k "HARNESSINIT" -d "Sync Harness with Attendee List" -c "$((Get-Projects).count) projects" -f Add-HarnessEventDetails
 }
 function Add-HarnessUser {
     [CmdletBinding()]
@@ -2748,8 +2856,11 @@ function Set-GCP-Project {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 # Automated options
-Get-DeployTest
-Get-RemoveTest
+Get-GoogleApiAccessToken
+Save-EventDetails
+exit
+Get-HeadlessMode
+Get-RemoveAuto
 Get-JanitorMode
 # Normal, looped operation for general use
 Get-GoogleLogin
