@@ -767,11 +767,74 @@ function Get-GoogleAccessToken {
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
-    Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    if (-not $headless) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
+    $credentialsJson = Get-Content 'harnessevents.json' -Raw | Convertfrom-Json
+    Set-Prefs -k "ServiceAccountEmail" -v $credentialsJson.client_email
+    $PrivateKey = $credentialsJson.private_key -replace '-----BEGIN PRIVATE KEY-----\n' -replace '\n-----END PRIVATE KEY-----\n' -replace '\n'
+    Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
     # Cleanup due to Google's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
+}
+function Get-GoogleApiAccessToken {
+    if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
+        # Check if token is over 50m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAppTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            $script:appHeaders = @{
+                "Authorization"       = "Bearer $($config.GoogleAppToken)"
+                "x-goog-user-project" = $($config.AdminProjectId)
+            }
+            Send-Update -t 0 -c "Google App Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google App Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
+    }
+    else {
+        Send-Update -t 1 -c "New token needed"
+    }
+    $PrivateKey = $config.ServiceAccountKey
+    $header = @{
+        alg = "RS256"
+        typ = "JWT"
+    }
+    $headerBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($header | ConvertTo-Json)))
+    $timestamp = [Math]::Round((Get-Date -UFormat %s))
+    $claimSet = @{
+        iss   = $config.ServiceAccountEmail
+        scope = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets"
+        aud   = "https://oauth2.googleapis.com/token"
+        exp   = $timestamp + 3600
+        iat   = $timestamp
+        # sub   = $TargetUserEmail
+    }
+    $claimSetBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($claimSet | ConvertTo-Json)))
+    $signatureInput = $headerBase64 + "." + $claimSetBase64
+    $signatureBytes = [System.Text.Encoding]::UTF8.GetBytes($signatureInput)
+    $privateKeyBytes = [System.Convert]::FromBase64String($PrivateKey)
+    $rsaProvider = [System.Security.Cryptography.RSA]::Create()
+    $bytesRead = $null
+    $rsaProvider.ImportPkcs8PrivateKey($privateKeyBytes, [ref]$bytesRead)
+    $signature = $rsaProvider.SignData($signatureBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    $signatureBase64 = [System.Convert]::ToBase64String($signature)
+    $jwt = $headerBase64 + "." + $claimSetBase64 + "." + $signatureBase64
+    $body = @{
+        grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        assertion  = $jwt
+    }
+    $response = Invoke-RestMethod -Uri "https://oauth2.googleapis.com/token" -Method POST -Body $body -ContentType "application/x-www-form-urlencoded"
+    $script:appHeaders = @{
+        Authorization         = 'Bearer {0}' -f $response.access_token
+        "x-goog-user-project" = $($config.AdminProjectId)
+    }
+    # Save valid token
+    Set-Prefs -k "GoogleAppToken" -v $response.access_token
+    Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
 }
 function Get-GoogleAppToken {
     # Bypass this is running as a deployment test - it won't have the ability to write out a google sheet
@@ -1178,7 +1241,7 @@ function Save-EventDetails {
             $exportArray += ,@($member.role,$member.email)
         }
     }
-    # If there's a google project, generate links for it too
+    # If there's a google project, generate links for it
     if ($config.GoogleProjectId) {
         $exportArray += ,@(" ")
         $exportArray += ,@("Event Google Project Links")
@@ -1191,6 +1254,8 @@ function Save-EventDetails {
         $GoogleDetails += "Google Artifact Registry,https://console.cloud.google.com/artifacts?project=$($config.GoogleProjectId)`r`n"
         $GoogleDetails += "Google Cloud Run,https://console.cloud.google.com/run?project=$($config.GoogleProjectId)`r`n"
     }
+    # TODO Generate links for AWS
+    # TODO Generate links for Azure
     # Check if we have consent to write out a google worksheet
     if (-not $config.GoogleAppToken) {
         $members | Format-Table
@@ -1199,23 +1264,28 @@ function Save-EventDetails {
         Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
         return
     }
-    else {
-        $script:appHeaders = @{
-            "Authorization"       = "Bearer $($config.GoogleAppToken)"
-            "x-goog-user-project" = $($config.AdminProjectId)
-        }
-    }
+
+    # Get ID of HarnessEvents shared drive
+    $uriDrive = "https://www.googleapis.com/drive/v3/drives?supportsAllDrives=true&q=name='HarnessEvents'"
+    $drive = Invoke-RestMethod -Method 'GET' -uri $uriDrive -Headers $appHeaders -ContentType "application/json"
+    # Get ID of events folder
+    $uriEventsFolder = "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=$($drive.drives.id)&q=mimeType='application/vnd.google-apps.folder' and name='instructor classrooms'"
+    $eventsFolder = Invoke-RestMethod -Method 'GET' -uri $uriEventsFolder -Headers $appHeaders -ContentType "application/json"
     # Check if HarnessEvents folder already exists in current user's googley drive- create if needed
-    $uri = "https://www.googleapis.com/drive/v3/files?q=mimeType='application/vnd.google-apps.folder' and name='HarnessEvents'"
+    $uri = "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=$($drive.drives.id)&q=mimeType='application/vnd.google-apps.folder' and name='" + $($config.GoogleUser) + "' and '" + $eventsFolder.files.id + "' in parents"
+    Send-Update -t 0 -c "uri to check for google folder: $uri"
     $response = invoke-restmethod -Method 'GET' -uri $uri -Headers $appHeaders -ContentType "application/json"
     if ($response.files) {
-        Send-Update -t 0 -c "HarnessEvents Google Drive folder already exists- skipping creation"
+        Send-Update -t 0 -c "$($config.GoogleUser) Google Drive folder already exists- skipping creation"
         $parentFolder = $response.files.id
     }
     else {
         $bodyFolder = @{
-            "name"     = "HarnessEvents"
+            "name"     = $config.GoogleUser
             "mimeType" = "application/vnd.google-apps.folder"
+            "parents"  = @(
+                $eventsFolder.files.id
+            )
         } | ConvertTo-Json
         $folder = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFolder -ContentType "application/json"
         Send-Update -t 0 -c "Created Google Drive folder: HarnessEvents"
@@ -1374,7 +1444,7 @@ function Set-EventUsers {
     Set-Prefs -k "UserEventCount" -v $usersToAdd
 }
 function Sync-Event {
-    Get-GoogleAppToken
+    Get-GoogleApiAccessToken
     Get-Events
     if (-not $config.GoogleEventName) {
         Send-Update -t 2 -c "Please select a valid event"
@@ -2786,6 +2856,9 @@ function Set-GCP-Project {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 # Automated options
+Get-GoogleApiAccessToken
+Save-EventDetails
+exit
 Get-HeadlessMode
 Get-RemoveAuto
 Get-JanitorMode
