@@ -2857,10 +2857,14 @@ function Set-GCP-Project {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
+
+## temp options to refactor saving google sheets
+# Get-GoogleApiAccessToken
+# Save-EventDetails
+# exit
+## end temp options
+
 # Automated options
-Get-GoogleApiAccessToken
-Save-EventDetails
-exit
 Get-HeadlessMode
 Get-RemoveAuto
 Get-JanitorMode
