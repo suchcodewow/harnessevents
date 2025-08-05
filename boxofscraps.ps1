@@ -1264,11 +1264,10 @@ function Save-EventDetails {
         Send-Update -t 1 -c "Exported --> $($config.GoogleEventName).csv"
         return
     }
-
     # Get ID of HarnessEvents shared drive
     $uriDrive = "https://www.googleapis.com/drive/v3/drives?supportsAllDrives=true&q=name='HarnessEvents'"
     $drive = Invoke-RestMethod -Method 'GET' -uri $uriDrive -Headers $appHeaders -ContentType "application/json"
-    # Get ID of events folder
+    # Get ID of instructor classrooms folder
     $uriEventsFolder = "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=$($drive.drives.id)&q=mimeType='application/vnd.google-apps.folder' and name='instructor classrooms'"
     $eventsFolder = Invoke-RestMethod -Method 'GET' -uri $uriEventsFolder -Headers $appHeaders -ContentType "application/json"
     # Check if HarnessEvents folder already exists in current user's googley drive- create if needed
@@ -1288,36 +1287,39 @@ function Save-EventDetails {
             )
         } | ConvertTo-Json
         $folder = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFolder -ContentType "application/json"
-        Send-Update -t 0 -c "Created Google Drive folder: HarnessEvents"
+        Send-Update -t 0 -c "Created Google Drive folder: $($config.GoogleUser)"
         $parentFolder = $folder.id
     }
     if (-not $parentFolder) {
         Send-Update -t 2 -c "Failed to create or obtain HarnessEvents Google Folder- skipping google sheet create."
         return
     }
-    # We have a valid parent folder- use current event sheet or create new
-    $uriFileExists = "https://www.googleapis.com/drive/v3/files?q='$($parentFolder)' in parents and name='$($config.GoogleEventName)'"
+    # We have a valid parent folder- delete old google sheet if present
+    $uriFileExists = "https://www.googleapis.com/drive/v3/files?supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=$($drive.drives.id)&q='$($parentFolder)' in parents and name='$($config.GoogleEventName)'"
     $responseFileExists = invoke-restmethod -Method 'GET' -headers $appHeaders -uri $uriFileExists
     if ($responseFileExists.files.id) {
-        $fileId = $responseFileExists.files.id
-        Send-Update -t 0 -c "Using existing event file id: $fileId"
+        foreach ($fileId in $responseFileExists.files.id) {
+            # $fileId = $responseFileExists.files.id
+            $uriDelete = "https://www.googleapis.com/drive/v3/files/$($fileId)?supportsAllDrives=true"
+            Send-Update -t 0 -c "delete uri: $uriDelete"
+            Invoke-RestMethod -method 'Delete' -uri $uriDelete -headers $appHeaders
+            Send-Update -t 0 -c "Deleted old file: $fileId"
+        }
+    }
+    $bodyFile = @{
+        "name"     = $($config.GoogleEventName)
+        "mimeType" = "application/vnd.google-apps.spreadsheet"
+        parents    = @(
+            $parentFolder
+        )
+    } | ConvertTo-Json
+    $responseSheets = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFile -ContentType "application/json"
+    if (-not $responseSheets.id) {
+        Send-Update -t 2 -c "Failed to create $($config.GoogleEventName) Google Sheet"
+        return
     }
     else {
-        $bodyFile = @{
-            "name"     = $($config.GoogleEventName)
-            "mimeType" = "application/vnd.google-apps.spreadsheet"
-            parents    = @(
-                $parentFolder
-            )
-        } | ConvertTo-Json
-        $responseSheets = invoke-restmethod -Method 'POST' -uri $uri -Headers $appHeaders -body $bodyFile -ContentType "application/json"
-        if (-not $responseSheets.id) {
-            Send-Update -t 2 -c "Failed to create $($config.GoogleEventName) Google Sheet"
-            return
-        }
-        else {
-            $fileId = $responseSheets.id
-        }
+        $fileId = $responseSheets.id
     }
     # Clear data from spreadsheet
     $uriClear = "https://sheets.googleapis.com/v4/spreadsheets/$($fileId)/values/A1:Z1000:clear"
