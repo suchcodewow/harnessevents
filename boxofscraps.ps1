@@ -460,10 +460,12 @@ function Get-HeadlessMode {
     Send-Update -t 1 -c "Running Headless Deployment"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
+    # Use cli provided instructor name if present
     if ($instructorName) {
         $currentUser = $instructorName
     }
-    else {
+    else { 
+        # this will use the cloudsdk account- typically used for daily testing
         $currentUser = gcloud auth list --format='value(account)'
     }
     Set-Prefs -k "GoogleUser" -v $currentUser
