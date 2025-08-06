@@ -1104,7 +1104,7 @@ function New-User {
 }
 function Remove-Event {
     # This does several things:
-    # It will delete any existing classrooms
+    # It will delete any existing cloud classrooms
     # It will wipe all event users from the Harness account as well as all google accounts
     # It will delete the event email (completely eliminating the event)
     # It will set all known secrets to a value of 123
@@ -1175,7 +1175,7 @@ function Remove-Event {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
-    if ($config.removeauto) {
+    if ($config.removeauto -or $config.HarnessAccount -eq "HarnessEvents") {
         Remove-Organization
     }
     Set-Prefs -k "GoogleEventEmail"
@@ -1218,6 +1218,12 @@ function Reset-Password {
     # $response = Invoke-RestMethod -Method 'Put' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     # Send-Update -t 1 -c "Reset password to default: Harness!"
     # return $response
+}
+function Save-Event {
+    $datePrefix = $(Get-Date -Uformat "%Y-%m")
+    $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.EventName + ".json"
+    #gcloud storage rm gs://harnesseventsdata/events/open/*-$fileName
+    gcloud storage cp boxofscraps.ps1.conf gs://harnesseventsdata/events/open/$datePrefix-$fileName
 }
 function Save-EventDetails {
     $members = Get-GroupMembers | select-object -property role, email | sort-object -property role -Des
@@ -1408,6 +1414,7 @@ function Save-EventDetails {
     Send-Update -t 1 -c "Your event has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
     Send-Update -t 1 -c "Or open your Google Drive and navigate to: <your drive>/HarnessEvents/$($config.GoogleEventName)"
     Set-Prefs -k "EventLink" -v "https://docs.google.com/spreadsheets/d/$($fileId)"
+    Save-Event
 }
 function Set-Event {
     Get-Events
