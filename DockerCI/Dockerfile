@@ -47,4 +47,5 @@ RUN	apt-get update && apt-get install -y  \
 	echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list && curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg && apt-get update -y && apt-get install google-cloud-cli -y && \
 	curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" && \
 	install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl && \
+	apt-get install google-cloud-cli-gke-gcloud-auth-plugin -y && \
    	rm -rf /var/lib/apt/lists/*
