@@ -2722,6 +2722,7 @@ function New-GCP-Project {
     if ($projectCheck) {
         # Project already exists- skip creation
         Send-Update -t 1 -c "Project already exists- skipping creation."
+        Set-Prefs -k "GoogleProjectId" -v $projectCheck.projectId
     }
     else {
         # Get organization of admin project to assign to new project
