@@ -2553,14 +2553,21 @@ function Remove-HarnessEventDetails {
             Start-Sleep -s 2
         } until (-not $flagsNeeded)
     }
-    # Remove event users
+    # Remove event users from Harness Account
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
+    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
+    $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
     $eventUsers = Get-GroupMembers -s
-    foreach ($user in $eventUsers.members) {
-        $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
-        invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
-        Send-Update -t 1 -c "Removed $($user.email) from account $($config.HarnessAccount)"
+    foreach ($user in $harnessUsers) {
+        if ($eventUsers.email -contains $user.email) {
+            $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
+            invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
+            Send-Update -t 1 -c "Removed $($user.email) from account $($config.HarnessAccount)"
+        }
     }
     # Wait for users to be removed
+    # TODO confirm this is no longer needed - temporarily removinb because we changed the logic above
+    # in case this is a common account, we can't del
     $counter = 0
     Do {
         $counter++
