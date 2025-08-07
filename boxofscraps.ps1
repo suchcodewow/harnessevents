@@ -1267,11 +1267,13 @@ function Save-EventDetails {
     $attendeeCount = $members.count
     $members | Add-Member -MemberType NoteProperty -Name "password" -Value ""
     $members | Add-Member -MemberType NoteProperty -Name "HarnessLink" -Value ""
+    $members | Add-Member -MemberType NoteProperty -Name "LabLink" -Value ""
     # Create array of arrays suitable for dropping into googley sheet
     $exportArray = @()
+    $exportArray += ,@("Open this in an incognito window!")
     $exportArray += ,@($config.GoogleEventName)
     $exportArray += ,@(" ")
-    $exportArray += ,@("","    Class Email Address    ","  Class Password  ","  Direct Project Link  ","  Your Name  ","  Where are you from?  ","  Vacations-Hot or Cold?  ")
+    $exportArray += ,@("    Class Email Address    ","  Class Password  ","  Direct Project Link  ","  Lab Guide  ","  Your Name  ","  Where are you from?  ","  Vacations-Hot or Cold?  ")
     foreach ($member in $members) {
         $cleanProject = ($member.email.split("@")[0] -replace '\W', '').tolower()
         if ($member.role -eq "MEMBER") {
@@ -1279,11 +1281,13 @@ function Save-EventDetails {
             $member.password = "Harness!"
             $member.HarnessLink = "https://app.harness.io/ng/account/$($config.HarnessAccountId)/module/cd/orgs/$($config.HarnessOrg)/projects/$($cleanProject)/pipelines"
             $harnessLink = '=HYPERLINK("' + $($member.HarnessLink) + '","Project Link")'
-            $exportArray += ,@($member.role,$member.email, $member.password, $harnessLink)
+            $member.LabLink = "https://suchcodewow.io/harness?account=$($config.HarnessAccountId)&org=$($config.HarnessOrg)&project=$($cleanProject)"
+            $labLink = '=HYPERLINK("' + $($member.LabLink) + '","Lab Guide")'
+            $exportArray += ,@($member.email, $member.password, $harnessLink, $labLink)
         }
         else {
             $member.role = "Instructor"
-            $exportArray += ,@($member.role,$member.email)
+            $exportArray += ,@($member.email)
         }
     }
     # If there's a google project, generate links for it
@@ -1383,8 +1387,8 @@ function Save-EventDetails {
                 "repeatCell" = @{
                     "range"  = @{
                         "sheetId"       = 0
-                        "startRowIndex" = 2
-                        "endRowIndex"   = 3
+                        "startRowIndex" = 3
+                        "endRowIndex"   = 4
                     }
                     "cell"   = @{
                         "userEnteredFormat" = @{
@@ -1412,8 +1416,8 @@ function Save-EventDetails {
                 "repeatCell" = @{
                     "range"  = @{
                         "sheetId"          = 0
-                        "startRowIndex"    = 4 + $attendeeCount
-                        "endRowIndex"      = 5 + $attendeeCount
+                        "startRowIndex"    = 5 + $attendeeCount
+                        "endRowIndex"      = 6 + $attendeeCount
                         "startColumnIndex" = 0
                         "endColumnIndex"   = 1
                     }
@@ -2787,6 +2791,7 @@ function New-GCP-Project {
         Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
         # Add users to project
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
+        Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
         # Create worker, get keys, add to IAM
         #Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
