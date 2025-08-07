@@ -632,12 +632,13 @@ function Add-UserToGroup {
     }
     # Build api call for group
     $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
-    Send-Update -t 0 -c "Group URI: $uri"
+    Send-Update -t 0 -c "Email $userEmail being added to Group URI: $uri"
     if ($owner) { $role = "OWNER" } else { $role = "MEMBER" }
     $body = @{
         "email" = $userEmail
         "role"  = $role
     } | ConvertTo-Json
+    Send-Update -t 0 -c "Body: $body"
     $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
 }
