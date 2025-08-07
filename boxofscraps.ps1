@@ -10,7 +10,7 @@ param (
     [string] $eventName,                    # [HEADLESS MODE] specifiy event name
     [string] $instructorName,               # [HEADLESS MODE] specify instructorName
     [switch] $help,                         # show other command options and exit
-    [switch] $janitormode,                  # sweep sweep!
+    [switch] $janitorMode,                  # sweep sweep!
     [switch] $logReset,                     # enable to reset log between runs
     [switch] $removeauto,                   # remove all elements based on current conf file
     [switch] $verbose,                      # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
@@ -506,9 +506,31 @@ function Get-JanitorMode {
     if (-not $janitormode) {
         return
     }
-    Send-Update -t 1 -c "Running event cleanup" 
-
-    SEnd-Update -t 1 -c "End event cleanup"
+    #max number of hours an event will remain
+    $maxEventHours = 4
+    Send-Update -t 1 -c "Running event cleanup"
+    $validEvents = @()
+    $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
+    foreach ($eventJson in $openEvents) {
+        $e = gcloud storage cat $eventJson | ConvertFrom-Json
+        $TimeDiff = $(Get-Date) - $e.GoogleAppTokenTimestamp
+        if ($TimeDiff.TotalHours -gt $maxEventHours) {
+            Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
+            $script:config = $e
+            Set-Prefs -k "RemovalTriggered" -v $(Get-Date)
+            Remove-Event
+            gcloud storage cp boxofscraps.ps1.conf gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
+            gcloud storage rm $eventJson
+        }
+        else {
+            # Event is still active- record it so we can wipe out any orphans in the end.
+            # That sounded AWFUL.  jeez.  I meant REMOVE any events that aren't ATTACHED to anything.
+            $validEvents += $e.GoogleEventEmail
+        }
+    }
+    Send-Update -t 1 -c "There are $($validEvents.count) open events."
+    Send-Update -t 1 -c "End event cleanup"
+    exit
 }
 function Get-RemoveAuto {
     # Run removeauto if cmd line switch used
@@ -769,7 +791,7 @@ function Get-GoogleAccessToken {
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
-    if (-not $headless) {
+    if (-not $headless -and -not $janitorMode) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     }
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
@@ -992,6 +1014,11 @@ function New-Event {
         if (-not($newEvent)) {
             return
         }
+        # Add user's admin email
+        if (!(Get-User -u $config.InstructorEmail)) {
+            New-User -u $config.InstructorEmail
+            Send-Update -t 1 -c "Generated your instructor email: $($config.InstructorEmail)"  
+        }
         $eventName = $newEvent -replace '\W', ''
         $eventName = "event-" + $eventName.tolower()
         $newEmail = $eventName + "@harnessevents.io"
@@ -1178,18 +1205,29 @@ function Remove-Event {
     if ($config.removeauto -or $config.HarnessAccount -eq "HarnessEvents") {
         Remove-Organization
     }
-    Set-Prefs -k "GoogleEventEmail"
-    Set-Prefs -k "GoogleEventId"
-    Set-Prefs -k "GoogleEventName"
-    Set-Prefs -k "HarnessPAT"
-    Set-Prefs -k "HarnessAccountId"
-    Set-Prefs -k "HarnessAccount"
-    Set-Prefs -k "UserEventCount"
-    Set-Prefs -k "UseGoogleClassroom"
-    Set-Prefs -k "UseAzureClassroom"
-    Set-Prefs -k "UseAWSClassroom"
-    Set-Prefs -k "HarnessOrg"   
-    Get-Events
+    # If we're auto-removing, delete the sensitive parts only and save the rest
+    if ($config.RemovalTriggered) {
+        Set-Prefs -k "HarnessPAT"
+        Set-Prefs -k "HarnessFFToken"
+        Set-Prefs -k "HarnessEventsPAT"
+        Set-Prefs -k "GoogleAccessToken"
+        Set-Prefs -k "ServiceAccountKey"
+        Set-Prefs -k "GoogleAppToken"
+    }
+    else {
+        Set-Prefs -k "HarnessOrg"
+        Set-Prefs -k "HarnessAccountId"
+        Set-Prefs -k "HarnessAccount"
+        Set-Prefs -k "UserEventCount"
+        Set-Prefs -k "UseGoogleClassroom"
+        Set-Prefs -k "UseAzureClassroom"
+        Set-Prefs -k "UseAWSClassroom"
+        Set-Prefs -k "GoogleEventEmail"
+        Set-Prefs -k "GoogleEventId"
+        Set-Prefs -k "GoogleEventName"
+        Set-Prefs -k "HarnessPAT"
+        Get-Events
+    }
 }
 function Remove-User {
     [CmdletBinding()]
@@ -1210,7 +1248,6 @@ function Reset-Password {
     # Send-Update -t 0 -c "reset uri: $uri"
     # $body = @{
     #     "primaryEmail"              = $userEmail
-
     #     "suspended"                 = $false
     #     "password"                  = "Harness!"
     #     "changePasswordAtNextLogin" = $false
@@ -2513,11 +2550,8 @@ function Remove-HarnessEventDetails {
         } until (-not $flagsNeeded)
     }
     # Remove event users
-    Send-Update -t 1 -c "Removing @harnessevents.io users from account: $($config.HarnessAccount)"
-    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
-    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
-    $eventUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
-    foreach ($user in $eventUsers) {
+    $eventUsers = Get-GroupMembers -s
+    foreach ($user in $eventUsers.members) {
         $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
         invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
         Send-Update -t 1 -c "Removed $($user.email) from account $($config.HarnessAccount)"
@@ -2534,7 +2568,6 @@ function Remove-HarnessEventDetails {
         $eventUsers = $response.data.content | Where-Object { $_.name.Contains("@harnessevents.io") }
         Send-Update -t 1 -c "Waiting for $($eventUsers.count) users to be removed..."
         Start-Sleep -s 2
-
     } until ($eventUsers.count -eq 0)
     Clear-orgSecrets
     # This worked- remove cached details for event
@@ -2867,13 +2900,6 @@ function Set-GCP-Project {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
-
-## temp options to refactor saving google sheets
-# Get-GoogleApiAccessToken
-# Save-EventDetails
-# exit
-## end temp options
-
 # Automated options
 Get-HeadlessMode
 Get-RemoveAuto
