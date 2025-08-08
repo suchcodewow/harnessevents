@@ -510,6 +510,8 @@ function Get-JanitorMode {
     $maxEventHours = 4
     Send-Update -t 1 -c "Running event cleanup"
     $validEvents = @()
+    $validOrgs = @()
+    $validGCPProjects = @()
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
     foreach ($eventJson in $openEvents) {
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
@@ -524,12 +526,27 @@ function Get-JanitorMode {
         }
         else {
             # Event is still active- record it so we can wipe out any orphans in the end.
-            # That sounded AWFUL.  jeez.  I meant REMOVE any events that aren't ATTACHED to anything.
+            # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything.
             $validEvents += $e.GoogleEventEmail
+            $validGCPProjects += $e.GoogleProjectId
+            if ($e.HarnessAccount -eq "HarnessEvents") {
+                $validOrgs += $e.HarnessOrg
+            }
         }
     }
-    Send-Update -t 1 -c "There are $($validEvents.count) open events."
-    Send-Update -t 1 -c "End event cleanup"
+    Send-Update -t 1 -c "$($validEvents.count) open events."
+    Send-Update -t 1 -c "$($validOrgs.count) organizations open in HarnessEvents community account."
+    Send-Update -t 1 -c "$($validGCPProjects.count) google projects."
+    $gcpProjects = Get-GCP-ProjectList
+    Send-Update -t 1 -c "$gcpProjects total google projects."
+    #Remove unattached google projects
+    foreach ($project in $gcpProjects) {
+        write-host $project
+        # if ($project.name.substring(0,6) -ne "event-") {
+        #     Set-Error -errormsg "$issueStart doesn't follow naming convention 'event-'."
+        # }
+        Send-Update -t 1 -c "End event cleanup" 
+    }
     exit
 }
 function Get-RemoveAuto {
@@ -2747,6 +2764,15 @@ function Update-FeatureFlag {
 }
 
 # Classroom Functions
+function Get-GCP-ProjectList {
+    # Retrieve administration organization
+    $adminOrg = invoke-expression -Command "gcloud organizations list --filter='display_name:harnessevents.io' --format=json" | Convertfrom-Json
+    $adminOrgId = $adminOrg.name.split("/")[1]
+    Set-Prefs -k "AdminOrgId" -v $adminOrgId
+    # Retrieve all child projects except administration
+    $projects = Send-Update -t 1 -c "Retrieving projects" -r "gcloud projects list --filter='parent.id:$($config.AdminOrgId) AND -name:administration' --format=json" | Convertfrom-Json
+    return $projects
+}
 function New-AWSProject {
     ##TODO AWS Project Functions
     Send-Update -t 1 -c "Sorry, this is not built yet!"
