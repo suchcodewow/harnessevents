@@ -512,10 +512,12 @@ function Get-JanitorMode {
     $validEvents = @()
     $validOrgs = @()
     $validGCPProjects = @()
+    #load all open events
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
     foreach ($eventJson in $openEvents) {
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
         $TimeDiff = $(Get-Date) - $e.GoogleAppTokenTimestamp
+        # if event is expired, mark it for removal
         if ($TimeDiff.TotalHours -gt $maxEventHours) {
             Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
             $script:config = $e
@@ -525,8 +527,8 @@ function Get-JanitorMode {
             gcloud storage rm $eventJson
         }
         else {
-            # Event is still active- record it so we can wipe out any orphans in the end.
-            # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything.
+            # Event is still active- record it so we can wipe out any orphans later.
+            # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
             $validEvents += $e.GoogleEventEmail
             $validGCPProjects += $e.GoogleProjectId
             if ($e.HarnessAccount -eq "HarnessEvents") {
@@ -2385,10 +2387,8 @@ function Clear-OrgSecrets {
             }
         } | Convertto-Json
         $uri = "https://app.harness.io/ng/api/v2/secrets/$($secretID)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&privateSecret=false"
-        #https://app.harness.io/ng/api/v2/secrets/ { identifier }?accountIdentifier=string&orgIdentifier=string&projectIdentifier=string'
         Send-Update -t 1 -c "Clearing secret: $secretID"
         Try {
-
             Invoke-RestMethod -uri $uri -Method 'PUT' -headers $templateheaders -ContentType $contentType -body $body | Out-Null
         }
         Catch {
@@ -2572,10 +2572,10 @@ function Remove-HarnessEventDetails {
         } until (-not $flagsNeeded)
     }
     # Remove event users from Harness Account
-    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)"
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($config.HarnessAccountId)&org=$($config.HarnessOrg)"
     $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
     $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
-    $eventUsers = Get-GroupMembers -s
+    $eventUsers = (Get-GroupMembers -s).members
     foreach ($user in $harnessUsers) {
         if ($eventUsers.email -contains $user.email) {
             $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
@@ -2584,20 +2584,20 @@ function Remove-HarnessEventDetails {
         }
     }
     # Wait for users to be removed
-    # TODO confirm this is no longer needed - temporarily removinb because we changed the logic above
-    # in case this is a common account, we can't del
-    $counter = 0
-    Do {
-        $counter++
-        if ($counter -ge 10) {
-            Send-Update -t 2 -c "It took to long for users to be removed."
-            exit
-        }
-        $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
-        $eventUsers = $response.data.content | Where-Object { $_.name.Contains("@harnessevents.io") }
-        Send-Update -t 1 -c "Waiting for $($eventUsers.count) users to be removed..."
-        Start-Sleep -s 2
-    } until ($eventUsers.count -eq 0)
+    # TODO confirm this is no longer needed - temporarily removing because we changed the logic above
+    # in case this is a common account, we can't delete all harness accounts
+    # $counter = 0
+    # Do {
+    #     $counter++
+    #     if ($counter -ge 10) {
+    #         Send-Update -t 2 -c "It took to long for users to be removed."
+    #         exit
+    #     }
+    #     $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST'
+    #     $eventUsers = $response.data.content | Where-Object { $_.name.Contains("@harnessevents.io") }
+    #     Send-Update -t 1 -c "Waiting for $($eventUsers.count) users to be removed..."
+    #     Start-Sleep -s 2
+    # } until ($eventUsers.count -eq 0)
     Clear-orgSecrets
     # This worked- remove cached details for event
     return $true
