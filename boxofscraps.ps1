@@ -534,11 +534,12 @@ function Get-JanitorMode {
             if ($e.HarnessAccount -eq "HarnessEvents") {
                 $validOrgs += $e.HarnessOrg
             }
+            Send-Update -t 1 -c "$($e.GoogleEventEmail) is still valid with $([Math]::ROUND($maxEventHours - $TimeDiff.TotalHours,1))h remaining."
         }
     }
-    Send-Update -t 1 -c "$($validEvents.count) open events."
-    Send-Update -t 1 -c "$($validOrgs.count) organizations open in HarnessEvents community account."
-    Send-Update -t 1 -c "$($validGCPProjects.count) google projects."
+    Send-Update -t 1 -c "$($validEvents.count) open event(s)."
+    Send-Update -t 1 -c "$($validOrgs.count) organization(s) open in HarnessEvents community account."
+    Send-Update -t 1 -c "$($validGCPProjects.count) google project(s)."
     $gcpProjects = Get-GCP-ProjectList
     Send-Update -t 1 -c "$gcpProjects total google projects."
     #Remove unattached google projects
