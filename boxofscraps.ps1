@@ -1279,7 +1279,6 @@ function Reset-Password {
 function Save-Event {
     $datePrefix = $(Get-Date -Uformat "%Y-%m")
     $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.EventName + ".json"
-    #gcloud storage rm gs://harnesseventsdata/events/open/*-$fileName
     gcloud storage cp boxofscraps.ps1.conf gs://harnesseventsdata/events/open/$datePrefix-$fileName
 }
 function Save-EventDetails {
@@ -1762,15 +1761,15 @@ function Add-HarnessAdmin {
 function Add-HarnessEventDetails {
     # This step does a bunch of things right now (maybe break it down?)
     # It will:
-    #   enable the feature flags at gs://harnesseventsdata/config/featureflagstart.json
-    #   add filters listed at gs://harnesseventsdata/config/filters.json
+    #   enable the feature flags at ./harnesseventsdata/config/featureflagstart.json
+    #   add filters listed at ./harnesseventsdata/config/filters.json
     #   enable google-auth in oauth settings and create an attendee role
     #   load all secrets starting with 'org' from google secret manager
-    #   load all templates found in gs://harnesseventsdata/OrgTemplates/*.yaml
+    #   load all templates found in ./harnesseventsdata/OrgTemplates/*.yaml
     #   add the organization for the chosen event, add projects for everyone, and add users to the attendee role
 
     # Add needed flags
-    $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
+    $featureFlagsStart = get-content -path ./harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
     $currentFlags = Get-FeatureFlagStatus
     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
     foreach ($flag in $flagsNeeded) {
@@ -1786,7 +1785,7 @@ function Add-HarnessEventDetails {
     Enable-GoogleAuth
     Add-Organization
     # Add filters to make it easier to find stuff
-    $filters = gcloud storage cat gs://harnesseventsdata/config/filters.json | Convertfrom-Json
+    $filters = get-content -path ./harnesseventsdata/config/filters.json | Convertfrom-Json
     foreach ($filterObject in $filters.psobject.Properties.name) {
         foreach ($filter in $filters.$filterObject) {
             #write-host "type $filterObject name $filter"
@@ -1795,8 +1794,8 @@ function Add-HarnessEventDetails {
     }
     Add-OrgSecrets
     # Add Environments
-    Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgEnvironments/*.yaml"
-    Add-OrgYaml -YamlFolder "gs://harnesseventsdata/OrgTemplates/*.yaml"
+    Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgEnvironments/*.yaml"
+    Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgTemplates/*.yaml"
     Add-AttendeeRole
     $attendees = Get-GroupMembers
     $attendees += [PSCustomObject]@{"email" = $config.GoogleUser; "role" = "OWNER" }
@@ -1964,12 +1963,12 @@ function Add-OrgYaml {
     # This is currently a bit complex.  There are several yaml types in Harness that use aaaalllllmost the same
     # api structure.  Right now this function is identifying the type from the first line of yaml and then handling
     # multiple scenarios.
-    $OrgTemplates = gcloud storage ls $YamlFolder
+    $OrgTemplates = Get-ChildItem -path $YamlFolder
     foreach ($yaml in $OrgTemplates) {
         $modifiedTemplate = ""
         $templateId = (split-path $yaml -Leaf).split(".")[0]
         $templateName = $templateId.Replace("_"," ")
-        $template = gcloud storage cat $yaml
+        $template = Get-Content -path $yaml
         # There are multiple endpoints for essentially the same yaml.  Identify the type when it appears in the yaml
         # then setup the API requirements that team thought would be fun the day they designed their endpoint in a vacuum.
         $templateFirstLine = $template[0].trim()
@@ -2115,7 +2114,7 @@ function Add-OrgYaml {
 function Add-Policies {
     # Install all policies
     $uri = "https://app.harness.io/pm/api/v1/policies?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-    $orgPolicies = gcloud storage ls gs://harnesseventsdata/Policies/*.policy 
+    $orgPolicies = Get-ChildItem -path ./harnesseventsdata/Policies/*.policy 
     foreach ($policy in   $orgPolicies) {
         $policyId = (split-path $policy -Leaf).split(".")[0]
         $policyName = $policyId.Replace("_"," ")
@@ -2156,7 +2155,7 @@ function Add-Policies {
     }
     # Then install policysets using ID's of created policies
     $uriPolicyset = "https://app.harness.io/gateway/pm/api/v1/policysets?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
-    $policySets = gcloud storage ls gs://harnesseventsdata/Policies/*.policyset
+    $policySets = Get-ChildItem -path ./harnesseventsdata/Policies/*.policyset
     foreach ($policyset in $policySets) {
         $setId = (split-path $policyset -Leaf).split(".")[0]
         $setName = $setId.Replace("_"," ")
@@ -2558,7 +2557,7 @@ function Remove-HarnessEventDetails {
         Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
     }
     else {
-        $featureFlagsStart = gcloud storage cat gs://harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
+        $featureFlagsStart = Get-ChildItem -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
         $currentFlags = Get-FeatureFlagStatus
         $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
         foreach ($flag in $flagsNeeded) {
