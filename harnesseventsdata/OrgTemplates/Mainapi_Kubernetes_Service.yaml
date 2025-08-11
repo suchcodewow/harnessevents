@@ -1,0 +1,24 @@
+service:
+  name: mainapi-kubernetes
+  identifier: mainapicloudrun
+  orgIdentifier: none
+  tags: {}
+  serviceDefinition:
+    spec:
+      manifests:
+        - manifest:
+            identifier: mainapi_kubernetes
+            type: K8sManifest
+            spec:
+              store:
+                type: Github
+                spec:
+                  connectorRef: org.GitHub_Connector
+                  gitFetchType: Branch
+                  paths:
+                    - harness/services/mainapi/gcr.yaml
+                  repoName: mainapi
+                  branch: main
+              skipResourceVersioning: false
+              enableDeclarativeRollback: false
+    type: Kubernetes

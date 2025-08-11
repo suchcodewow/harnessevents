@@ -1,0 +1,18 @@
+template:
+  name: Service Now Update
+  identifier: Service_Now_Update
+  versionLabel: "1"
+  type: Step
+  orgIdentifier: 123
+  tags: {}
+  spec:
+    timeout: 10m
+    type: ServiceNowUpdate
+    spec:
+      useServiceNowTemplate: false
+      connectorRef: org.Service_Now_Connector
+      ticketType: change_request
+      ticketNumber: <+pipeline.stages.SN.spec.execution.steps.servicenowcreate.ticket.fields.number>
+      fields:
+        - name: state
+          value: "0"

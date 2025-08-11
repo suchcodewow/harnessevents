@@ -1,0 +1,12 @@
+infrastructureDefinition:
+  name: GCP Kubernetes Infrastructure
+  identifier: GCP_Kubernetes_Infrastructure
+  orgIdentifier: none
+  environmentRef: Production_Environment
+  deploymentType: Kubernetes
+  type: KubernetesDirect
+  spec:
+    connectorRef: org.GCP_Kubernetes_Connector
+    namespace: <+project.identifier>
+    releaseName: release-<+INFRA_KEY_SHORT_ID>
+  allowSimultaneousDeployments: true

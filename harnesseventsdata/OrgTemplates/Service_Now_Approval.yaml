@@ -1,0 +1,27 @@
+template:
+  name: Service Now Approval
+  type: Step
+  orgIdentifier: updateonimport
+  spec:
+    type: ServiceNowApproval
+    spec:
+      connectorRef: org.Service_Now_Connector
+      ticketNumber: <+pipeline.stages.SN.spec.execution.steps.servicenowcreate.ticket.fields.number>
+      retryInterval: 10s
+      approvalCriteria:
+        type: KeyValues
+        spec:
+          matchAnyCondition: true
+          conditions:
+            - key: state
+              operator: equals
+              value: Implement
+      rejectionCriteria:
+        type: KeyValues
+        spec:
+          matchAnyCondition: true
+          conditions: []
+      ticketType: change_request
+    timeout: 1d
+  identifier: Service_Now_Approval
+  versionLabel: "1"

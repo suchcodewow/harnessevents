@@ -1,0 +1,18 @@
+template:
+  name: GAR
+  identifier: GAR
+  versionLabel: "1"
+  type: ArtifactSource
+  orgIdentifier: event_builder
+  tags: {}
+  spec:
+    type: GoogleArtifactRegistry
+    spec:
+      repositoryType: docker
+      project: <+org.google_project>
+      region: <+org.google_region>
+      repositoryName: <+org.google_resource_id>
+      package: MAKEBETTER
+      version: <+input>
+      digest: ""
+      connectorRef: org.GCP_Platform_Connector

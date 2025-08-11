@@ -1,0 +1,15 @@
+connector:
+  name: GCP_Platform_Connector
+  identifier: GCP_Platform_Connector
+  description: ""
+  accountIdentifier: none
+  orgIdentifier: event_builder
+  type: Gcp
+  spec:
+    credential:
+      type: InheritFromDelegate
+    delegateSelectors:
+      - gcp
+    executeOnDelegate: true
+    proxy: false
+    ignoreTestConnection: false

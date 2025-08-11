@@ -1,0 +1,4 @@
+{
+  "Connector": ["gcp", "azure"],
+  "Template": ["gcp", "azure", "cheatcode"]
+}

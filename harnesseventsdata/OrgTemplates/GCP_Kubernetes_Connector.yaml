@@ -1,0 +1,13 @@
+connector:
+  name: GCP Kubernetes Connector
+  identifier: GCP_Kubernetes_Connector
+  description: ""
+  accountIdentifier: none
+  orgIdentifier: none
+  type: K8sCluster
+  spec:
+    credential:
+      type: InheritFromDelegate
+    delegateSelectors:
+      - gcp
+    ignoreTestConnection: false

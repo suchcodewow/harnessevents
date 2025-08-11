@@ -1,0 +1,17 @@
+connector:
+  name: ServiceNow
+  identifier: ServiceNow
+  description: ""
+  accountIdentifier: 123
+  orgIdentifier: 123
+  type: ServiceNow
+  spec:
+    serviceNowUrl: https://ven03172.service-now.com/
+    username: demo-admin
+    passwordRef: org.servicenowtoken
+    auth:
+      type: UsernamePassword
+      spec:
+        username: demo-admin
+        passwordRef: org.servicenowtoken
+    ignoreTestConnection: false

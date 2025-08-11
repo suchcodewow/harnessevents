@@ -1,0 +1,43 @@
+template:
+  name: Lab A Complete
+  identifier: Lab_A_Complete
+  versionLabel: "1"
+  type: Pipeline
+  orgIdentifier: event_builder
+  tags:
+    cheatcode: ""
+  spec:
+    properties:
+      ci:
+        codebase:
+          connectorRef: org.GitHub_Connector
+          repoName: globalcorp-mainapi
+          build: <+input>
+    stages:
+      - stage:
+          name: Build Python Application
+          identifier: Build_Python_Application
+          description: ""
+          type: CI
+          spec:
+            cloneCodebase: true
+            caching:
+              enabled: true
+              override: true
+            buildIntelligence:
+              enabled: true
+            platform:
+              os: Linux
+              arch: Amd64
+            runtime:
+              type: Cloud
+              spec: {}
+            execution:
+              steps:
+                - step:
+                    type: Run
+                    name: Do Steps here
+                    identifier: Do_Steps_here
+                    spec:
+                      shell: Sh
+                      command: echo "hi mom"
