@@ -512,6 +512,7 @@ function Get-JanitorMode {
     $validEvents = @()
     $validOrgs = @()
     $validGCPProjects = @()
+    Get-GoogleAccessToken
     #load all open events
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
     foreach ($eventJson in $openEvents) {
@@ -542,6 +543,9 @@ function Get-JanitorMode {
     Send-Update -t 1 -c "$($validGCPProjects.count) google project(s)."
     $gcpProjects = Get-GCP-ProjectList
     Send-Update -t 1 -c "$gcpProjects total google projects."
+    #Remove unattached google events
+    $eventGroups = Get-UserGroups
+
     #Remove unattached google projects
     foreach ($project in $gcpProjects) {
         write-host $project
@@ -1005,11 +1009,20 @@ function Get-UserGroups {
     # Get all groups that a user belongs to
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [string]
-        $UserEmail
+        $UserEmail,
+        [Parameter()]
+        [string]
+        $eventName
     )
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&userKey=$UserEmail&maxResults=50"
+    if ($UserEmail) {
+        $urlFilter = "&userKey=$UserEmail"
+    }
+    if ($eventName) {
+        $urlFilter += "&name=$($eventName)*"
+    }
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&maxResults=50$urlFilter"
     Send-Update -t 0 -c "Getting Usergroups for uri: $uri"
     try {
         $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
@@ -1786,17 +1799,23 @@ function Add-HarnessEventDetails {
     Enable-GoogleAuth
     Add-Organization
     # Add filters to make it easier to find stuff
-    $filters = get-content -path ./harnesseventsdata/config/filters.json | Convertfrom-Json
+    $filters = Get-Content -path ./harnesseventsdata/config/filters.json | Convertfrom-Json
     foreach ($filterObject in $filters.psobject.Properties.name) {
         foreach ($filter in $filters.$filterObject) {
             #write-host "type $filterObject name $filter"
             Add-Filter -filterType $filterObject -name $filter
         }
     }
+    # Add secrets from google secret manager
     Add-OrgSecrets
-    # Add Environments
-    Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgEnvironments/*.yaml"
-    Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgTemplates/*.yaml"
+    # Add everything in order from the 'org' folder
+    $OrgContent = Get-Childitem -path ./harnesseventsdata/org -attributes D
+    foreach ($folder in $OrgContent) {
+        Add-OrgYaml -YamlFolder "$folder/*.yaml"
+    }
+    # Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgEnvironments/*.yaml"
+    # Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgTemplates/*.yaml"
+    Add-Policies
     Add-AttendeeRole
     $attendees = Get-GroupMembers
     $attendees += [PSCustomObject]@{"email" = $config.GoogleUser; "role" = "OWNER" }
