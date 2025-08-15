@@ -3,7 +3,7 @@ connector:
   identifier: GCP_Platform_Connector
   description: ""
   accountIdentifier: none
-  orgIdentifier: event_builder
+  orgIdentifier: none
   type: Gcp
   spec:
     credential:

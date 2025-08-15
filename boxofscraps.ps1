@@ -7,10 +7,11 @@ param (
     [switch] $gcp,                          # enable gcp classroom (optional for headless mode)
     [string] $googleCloudProjectOverride,   # override project creation to use a specific project
     [switch] $headless,                     # deploy automatically. all [HEADLESS MODE] parameters become mandatory
+    [int] $hourLimit,                    # [JANITOR MODE] max event lifespan in hours
     [string] $eventName,                    # [HEADLESS MODE] specifiy event name
     [string] $instructorName,               # [HEADLESS MODE] specify instructorName
     [switch] $help,                         # show other command options and exit
-    [switch] $janitorMode,                  # sweep sweep!
+    [switch] $janitorMode,                  # sweep sweep! all [JANITOR MODE] parameterse become required
     [switch] $logReset,                     # enable to reset log between runs
     [switch] $removeauto,                   # remove all elements based on current conf file
     [switch] $verbose,                      # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
@@ -470,27 +471,16 @@ function Get-HeadlessMode {
     }
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-    if ($gcp) {
-        Set-Prefs -k "UseGoogleClassroom" -v "ENABLED"
-    }
-    if ($aws) {
-        Set-Prefs -k "UseAwsClassroom" -v "ENABLED"
-    }
-    if ($azure) {
-        Set-Prefs -k "UseAzureClassroom" -v "ENABLED"
-    }
-    if ($userCount) {
-        Set-Prefs -k "UserEventCount" -v $userCount
-    }
-    else {
-        Set-Prefs -k "UserEventCount" -v 3
-    }
-    if ($eventName) {
-        Set-Prefs -k "EventName" -v $eventName
-    }
-    else {
-        Set-Prefs -k "EventName" -v "deploytest"
-    }
+    if ($gcp) { Set-Prefs -k "UseGoogleClassroom" -v "ENABLED" }
+    else { Set-Prefs -k "UseGoogleClassroom" }
+    if ($aws) { Set-Prefs -k "UseAwsClassroom" -v "ENABLED" }
+    else { Set-Prefs -k "UseAwsClassroom" }
+    if ($azure) { Set-Prefs -k "UseAzureClassroom" -v "ENABLED" }
+    else { Set-PRefs --k "UseAzureClassroom" }
+    if ($userCount) { Set-Prefs -k "UserEventCount" -v $userCount }
+    else { Set-Prefs -k "UserEventCount" -v 3 }
+    if ($eventName) { Set-Prefs -k "EventName" -v $eventName }
+    else { Set-Prefs -k "EventName" -v $(Get-UserName) }
     # Currently the only required item is some kind of username
     if (-not $currentUser) {
         Send-Update -t 2 -c "No instructor email provided.  Is it illegal in 23 US states to continue without one.  Nice try though."
@@ -506,14 +496,21 @@ function Get-JanitorMode {
     if (-not $janitormode) {
         return
     }
-    #max number of hours an event will remain
-    $maxEventHours = 4
+    if ($hourLimit) {
+        $maxEventHours = $hourLimit
+    }
+    else {
+        Send-Update -t 2 -c "The -hourLimit <hours> flag must be set, you silly billy."
+        exit
+    }
     Send-Update -t 1 -c "Running event cleanup"
     $validEvents = @()
-    $validOrgs = @()
+    $expiredOrgs = @()
     $validGCPProjects = @()
+    $validAWSProjects = @()
+    $validAzureProjects = @()
     Get-GoogleAccessToken
-    #load all open events
+    # load all open events
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
     foreach ($eventJson in $openEvents) {
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
@@ -521,39 +518,64 @@ function Get-JanitorMode {
         # if event is expired, mark it for removal
         if ($TimeDiff.TotalHours -gt $maxEventHours) {
             Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
-            $script:config = $e
-            Set-Prefs -k "RemovalTriggered" -v $(Get-Date)
-            Remove-Event
-            gcloud storage cp boxofscraps.ps1.conf gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
-            gcloud storage rm $eventJson
+            if ($e.HarnessAccount -and $e.HarnessOrg -and $e.HarnessAccountId -and $e.HarnessPat) {
+                $expiredOrgs += [PSCustomObject]@{
+                    account    = $e.HarnessAccount
+                    org        = $e.HarnessOrg
+                    id         = $e.HarnessAccountId
+                    pat        = $e.HarnessPat
+                    HarnessEnv = $e.HarnessEnv
+                }
+                Send-Update -t 1 -c "Added $($e.HarnessOrg) in $($e.HarnessAcount) to expired events."
+            }
+            else {
+                Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat)"
+            }
+            gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
+            #gcloud storage rm $eventJson
         }
         else {
             # Event is still active- record it so we can wipe out any orphans later.
             # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
             $validEvents += $e.GoogleEventEmail
             $validGCPProjects += $e.GoogleProjectId
-            if ($e.HarnessAccount -eq "HarnessEvents") {
-                $validOrgs += $e.HarnessOrg
-            }
+            $validAWSProjects += $e.AWSProjectId
+            $validAzureProjects += $e.AzureProjectId
             Send-Update -t 1 -c "$($e.GoogleEventEmail) is still valid with $([Math]::ROUND($maxEventHours - $TimeDiff.TotalHours,1))h remaining."
         }
     }
-    Send-Update -t 1 -c "$($validEvents.count) open event(s)."
-    Send-Update -t 1 -c "$($validOrgs.count) organization(s) open in HarnessEvents community account."
-    Send-Update -t 1 -c "$($validGCPProjects.count) google project(s)."
-    $gcpProjects = Get-GCP-ProjectList
-    Send-Update -t 1 -c "$gcpProjects total google projects."
-    #Remove unattached google events
-    $eventGroups = Get-UserGroups
-
-    #Remove unattached google projects
-    foreach ($project in $gcpProjects) {
-        write-host $project
-        # if ($project.name.substring(0,6) -ne "event-") {
-        #     Set-Error -errormsg "$issueStart doesn't follow naming convention 'event-'."
-        # }
-        Send-Update -t 1 -c "End event cleanup" 
+    $test = @()
+    @("OMG DELETE ME","item2","HarnessEvents") | ForEach-Object {
+        $item = $_
+        $test += [PSCustomObject]@{
+            account    = "$item"
+            org        = "$item"
+            id         = "$item"
+            pat        = "$item"
+            HarnessEnv = "$item"
+        }
     }
+    # Cleanup Harness event details
+    Remove-HarnessEventDetailsV2 -accounts $test
+    # Remove unattached google events
+    $eventGroups = Get-UserGroups -allEvents
+    foreach ($e in $eventGroups) {
+        if ($validEvents -notcontains $e.email) {
+            Send-Update -t 1 -c "$($e.email) is no longer valid."
+            Remove-EventV2 -email $e.email -id $e.id
+        }
+    }
+    #Remove unattached google projects
+    $gcpProjects = Get-GCP-ProjectList
+    Send-Update -t 1 -c "$($validGCPProjects.count)/$($gcpProjects.count) valid google project(s)."
+    foreach ($project in $gcpProjects) {
+        if ($validGCPProjects -notcontains $project.projectId) {
+            Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
+            Remove-GCPProjectV2 -id $project.projectId
+        }
+        
+    }
+    Send-Update -t 1 -c "End event cleanup" 
     exit
 }
 function Get-RemoveAuto {
@@ -570,7 +592,7 @@ function Get-RemoveAuto {
     exit
 }
 
-# Event Functions
+#Event Functions
 function Add-Event {
     param(
         [string] $n, # name of item
@@ -651,7 +673,7 @@ function Add-UserToGroup {
         $groupKey = $config.GoogleEventId
     }
     if (!$groupKey) {
-        Send-Update -t 2 -c "Group Key is missing!  Cannot proceed"
+        Send-Update -t 2 -c "Group Key is missing! Cannot proceed"
         exit
     }
     # Build api call for group
@@ -725,7 +747,7 @@ function Get-GoogleLogin {
     # Use @harness.io email if already logged in
     $myGoogleAccount = Send-Update -t 1 -c "Retrieving local accounts" -r "gcloud auth list --filter=account:'harness.io' --format='value(account)'"
     if ($myGoogleAccount.count -eq 1) {
-        Send-Update -t 0 -c "Using current account" -r "gcloud config set account $myGoogleAccount  --no-user-output-enabled"
+        Send-Update -t 0 -c "Using current account" -r "gcloud config set account $myGoogleAccount --no-user-output-enabled"
         $currentUser = $myGoogleAccount
     }
     else {
@@ -979,6 +1001,7 @@ function Get-GroupMembers {
                 "members"     = $response.members | Where-Object { $_.role -eq "MEMBER" }
                 "ownerCount"  = ($response.members | Where-Object { $_.role -eq "OWNER" }).count
                 "memberCount" = ($response.members | Where-Object { $_.role -eq "MEMBER" }).count
+                "groupKey"    = $groupKey
             }
             return $groupMembers
         }
@@ -1013,16 +1036,16 @@ function Get-UserGroups {
         [string]
         $UserEmail,
         [Parameter()]
-        [string]
-        $eventName
+        [switch]
+        $allEvents
     )
     if ($UserEmail) {
         $urlFilter = "&userKey=$UserEmail"
     }
-    if ($eventName) {
-        $urlFilter += "&name=$($eventName)*"
+    if ($allEvents) {
+        $urlFilter = "&query=email:event-*"
     }
-    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&maxResults=50$urlFilter"
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io$urlFilter"
     Send-Update -t 0 -c "Getting Usergroups for uri: $uri"
     try {
         $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
@@ -1262,6 +1285,53 @@ function Remove-Event {
         Set-Prefs -k "HarnessPAT"
         Get-Events
     }
+}
+function Remove-EventV2 {
+    # V2 = splitting things up for headless mode refactor. leaving V1 for now for script mode
+    # This version now only removes the event and user email
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $email,
+        [Parameter(Mandatory = $true)]
+        [string]
+        $id
+    )
+    Send-Update -t 1 -c "Deleting google event $email"
+    $members = Get-GroupMembers -s -groupEmail $email
+    foreach ($member in $members.members) {
+        Remove-User -u $member.email
+        Send-Update -t 1 -c "Deleted user: $($member.email)"
+    }
+    While ($memberCount -gt 0) {
+        $memberCount = (Get-GroupMembers -s).memberCount
+        Send-Update -t 1 -c "Waiting for delete confirmation for $memberCount accounts"
+        Start-Sleep -s 4
+        $memberCounter++
+        if ($memberCounter -gt 20) {
+            Send-Update -t 2 -c "Something went wrong- $eventEmail users didn't fully delete."
+            exit
+        }
+    }
+    Send-Update -t 0 -c "Successfully deleted users"
+    $groupUri = "https://admin.googleapis.com/admin/directory/v1/groups/$($id)"
+    $GroupCheckUri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email=$($email)"
+    Send-Update -t 0 -c "Deleting group with uri: $groupUri"
+    Invoke-RestMethod -Method 'Delete' -Uri $groupUri -Headers $headers | Out-null
+    #Wait for group to be gone
+    $counter = 0
+    Do {
+        $counter++
+        if ($counter -ge 30) {
+            Send-Update -t 2 -c "Deleting the google group took too long. I'm OUTTA here."
+            exit
+        }
+        Send-Update -t 1 -c "Waiting for group deletion..."
+        Send-Update -t 0 -c "Group exists uri: $groupCheckUri"
+        $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
+        Start-Sleep -s 3
+    } until (-not $groupExists.groups)
 }
 function Remove-User {
     [CmdletBinding()]
@@ -1568,7 +1638,7 @@ function Sync-Event {
     Save-EventDetails
 }
 
-# Harness Functions
+#Harness Functions
 function Add-AttendeeRole {
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/roles"
     $body = @{
@@ -1783,7 +1853,7 @@ function Add-HarnessEventDetails {
     #   add the organization for the chosen event, add projects for everyone, and add users to the attendee role
 
     # Add needed flags
-    $featureFlagsStart = get-content -path ./harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
+    $featureFlagsStart = Get-Content -path ./harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
     $currentFlags = Get-FeatureFlagStatus
     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
     foreach ($flag in $flagsNeeded) {
@@ -2577,7 +2647,7 @@ function Remove-HarnessEventDetails {
         Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
     }
     else {
-        $featureFlagsStart = Get-ChildItem -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
+        $featureFlagsStart = Get-Content -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
         $currentFlags = Get-FeatureFlagStatus
         $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
         foreach ($flag in $flagsNeeded) {
@@ -2620,6 +2690,55 @@ function Remove-HarnessEventDetails {
     Clear-orgSecrets
     # This worked- remove cached details for event
     return $true
+}
+function Remove-HarnessEventDetailsV2 {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [object]
+        $accounts #account, org, id, pat
+    )
+    foreach ($account in $accounts) {
+        # Remove event users from Harness Account
+        $HarnessHeaders = @{
+            'x-api-key'    = $account.pat
+            'Content-Type' = 'application/json'
+        }
+        $body = @{
+            "searchTerm" = "harnessevents.io"
+        } | ConvertTo-Json
+    }
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($account.id)&org=$($account.org)"
+    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST' -body $body
+    $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
+    #$eventUsers = (Get-GroupMembers -s).members
+    foreach ($user in $harnessUsers) {
+        #if ($eventUsers.email -contains $user.email) {
+        $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
+        # invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
+        Send-Update -t 1 -c "Removed $($user.email) from account $($config.HarnessAccount)"
+        #}
+    }
+    if ($account.org -eq "HarnessEvents") {
+        # Do specific things for HarnessEvents
+        Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
+
+    }
+    else {
+        $featureFlagsStart = Get-ChildItem -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
+        $currentFlags = Get-FeatureFlagStatus
+        $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+        foreach ($flag in $flagsNeeded) {
+            Update-FeatureFlag -flag $flag.Name -value $flag.Value
+        }
+        do {
+            $currentFlags = Get-FeatureFlagStatus
+            $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+            Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
+            Start-Sleep -s 2
+        } until (-not $flagsNeeded)
+    }
+}
 }
 function Remove-Organization {
     # !!! This is only used in shared environments or when testing !!!
@@ -2936,6 +3055,25 @@ function Remove-GCP-Project {
     else {
         Send-Update -t 1 -c "Tried removing Google Project- but no Google Project ID found in config"
     }
+}
+function Remove-GCPProjectV2 {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $id
+    )
+    Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $id --quiet"
+    $Counter = 0
+    Do {
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 2 -c "Wow, something went terrrrrrribly wrong trying to remove Google Project: $id"
+            exit
+        }
+        $projectCheck = Send-Update -t 1 -c "Waiting for project delete confirmation..." -r "gcloud projects list --filter='name:$id' --format=json" | convertfrom-json
+        Start-Sleep -s 5
+    } while ($projectCheck)
 }
 function Set-AWS-Project {
     #Toggle AWS Project
