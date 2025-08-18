@@ -547,7 +547,7 @@ function Get-JanitorMode {
     Remove-HarnessEventDetailsV2 -accounts $expiredOrgs
     # Remove unattached google events
     $eventGroups = Get-UserGroups -allEvents
-    Send-Update -t 1 -c "$($validEvents.count)/$($eventGroups.count) valid events."
+    Send-Update -t 1 -c "$($validEvents.count) valid / $($eventGroups.count) total events."
     foreach ($e in $eventGroups) {
         if ($validEvents -notcontains $e.email) {
             Send-Update -t 1 -c "$($e.email) is no longer valid."
@@ -557,7 +557,7 @@ function Get-JanitorMode {
     #Remove unattached google projects
     $gcpProjects = Get-GCP-ProjectList
     $validGCPProjects
-    Send-Update -t 1 -c "$($validGCPProjects.count)/$($gcpProjects.count) valid google project(s)."
+    Send-Update -t 1 -c "$($validGCPProjects.count) valid / $($gcpProjects.count) total google project(s)."
     foreach ($project in $gcpProjects) {
         if ($validGCPProjects -notcontains $project.projectId) {
             Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
