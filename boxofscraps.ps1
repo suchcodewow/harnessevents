@@ -476,7 +476,7 @@ function Get-HeadlessMode {
     if ($aws) { Set-Prefs -k "UseAwsClassroom" -v "ENABLED" }
     else { Set-Prefs -k "UseAwsClassroom" }
     if ($azure) { Set-Prefs -k "UseAzureClassroom" -v "ENABLED" }
-    else { Set-PRefs --k "UseAzureClassroom" }
+    else { Set-PRefs -k "UseAzureClassroom" }
     if ($userCount) { Set-Prefs -k "UserEventCount" -v $userCount }
     else { Set-Prefs -k "UserEventCount" -v 3 }
     if ($eventName) { Set-Prefs -k "EventName" -v $eventName }
@@ -520,11 +520,11 @@ function Get-JanitorMode {
             Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
             if ($e.HarnessAccount -and $e.HarnessOrg -and $e.HarnessAccountId -and $e.HarnessPat) {
                 $expiredOrgs += [PSCustomObject]@{
-                    account    = $e.HarnessAccount
-                    org        = $e.HarnessOrg
-                    id         = $e.HarnessAccountId
-                    pat        = $e.HarnessPat
-                    HarnessEnv = $e.HarnessEnv
+                    account = $e.HarnessAccount
+                    org     = $e.HarnessOrg
+                    id      = $e.HarnessAccountId
+                    pat     = $e.HarnessPat
+                    env     = $e.HarnessEnv
                 }
                 Send-Update -t 1 -c "Added $($e.HarnessOrg) in $($e.HarnessAcount) to expired events."
             }
@@ -532,7 +532,6 @@ function Get-JanitorMode {
                 Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat)"
             }
             gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
-            #gcloud storage rm $eventJson
         }
         else {
             # Event is still active- record it so we can wipe out any orphans later.
@@ -544,19 +543,8 @@ function Get-JanitorMode {
             Send-Update -t 1 -c "$($e.GoogleEventEmail) is still valid with $([Math]::ROUND($maxEventHours - $TimeDiff.TotalHours,1))h remaining."
         }
     }
-    $test = @()
-    @("OMG DELETE ME","item2","HarnessEvents") | ForEach-Object {
-        $item = $_
-        $test += [PSCustomObject]@{
-            account    = "$item"
-            org        = "$item"
-            id         = "$item"
-            pat        = "$item"
-            HarnessEnv = "$item"
-        }
-    }
-    # Cleanup Harness event details
-    Remove-HarnessEventDetailsV2 -accounts $test
+    Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
+    Remove-HarnessEventDetailsV2 -accounts $expiredOrgs
     # Remove unattached google events
     $eventGroups = Get-UserGroups -allEvents
     foreach ($e in $eventGroups) {
@@ -2213,14 +2201,16 @@ function Add-Policies {
     foreach ($policy in   $orgPolicies) {
         $policyId = (split-path $policy -Leaf).split(".")[0]
         $policyName = $policyId.Replace("_"," ")
-        $policyContent = gcloud storage cat $policy | Out-String
+        $policyContent = Get-Content $policy | Out-String
         $body = @{
             "name"       = $policyName
             "identifier" = $policyId
             "rego"       = $policyContent
         } | ConvertTo-Json
+        Send-Update -t 1 -c "Adding/Updating policy $policyName"
         Try {
             Invoke-Restmethod -method 'POST' -uri $uri -body $body -ContentType "application/json" -headers $HarnessHeaders | Out-Null
+            
         }
         Catch {
             # Generates a System.Management.Automation.ErrorRecord
@@ -2254,7 +2244,7 @@ function Add-Policies {
     foreach ($policyset in $policySets) {
         $setId = (split-path $policyset -Leaf).split(".")[0]
         $setName = $setId.Replace("_"," ")
-        $setContent = gcloud storage cat $policyset | Convertfrom-Json
+        $setContent = Get-Content $policyset | Convertfrom-Json
         $setBody = @{
             "name"       = $setName
             "identifier" = $setId
@@ -2265,8 +2255,10 @@ function Add-Policies {
                 $setContent
             )
         } | ConvertTo-Json
+        Send-Update -t 1 -c "Adding/Updating policyset: $setName"
         Try {
             Invoke-Restmethod -method 'POST' -uri $uriPolicyset -body $setBody -ContentType "application/json" -headers $HarnessHeaders | Out-Null
+
         }
         Catch {
             # Generates a System.Management.Automation.ErrorRecord
@@ -2701,7 +2693,7 @@ function Remove-HarnessEventDetailsV2 {
     param (
         [Parameter()]
         [object]
-        $accounts #account, org, id, pat
+        $accounts #account, org, id, pat, env
     )
     foreach ($account in $accounts) {
         # Remove event users from Harness Account
@@ -2712,36 +2704,37 @@ function Remove-HarnessEventDetailsV2 {
         $body = @{
             "searchTerm" = "harnessevents.io"
         } | ConvertTo-Json
-    }
-    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($account.id)&org=$($account.org)"
-    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST' -body $body
-    $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
-    #$eventUsers = (Get-GroupMembers -s).members
-    foreach ($user in $harnessUsers) {
-        #if ($eventUsers.email -contains $user.email) {
-        $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($config.HarnessAccountId)"
-        # invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
-        Send-Update -t 1 -c "Removed $($user.email) from account $($config.HarnessAccount)"
-        #}
-    }
-    if ($account.org -eq "HarnessEvents") {
-        # Do specific things for HarnessEvents
-        Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
-
-    }
-    else {
-        $featureFlagsStart = Get-ChildItem -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
-        $currentFlags = Get-FeatureFlagStatus
-        $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-        foreach ($flag in $flagsNeeded) {
-            Update-FeatureFlag -flag $flag.Name -value $flag.Value
+        $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$($account.id)&orgIdentifier=$($account.org)"
+        $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST' -body $body
+        $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
+        #$eventUsers = (Get-GroupMembers -s).members
+        foreach ($user in $harnessUsers) {
+            $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($account.id)"
+            invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
+            Send-Update -t 1 -c "Removed $($user.email) from account $($account.id)"
         }
-        do {
-            $currentFlags = Get-FeatureFlagStatus
-            $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-            Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
-            Start-Sleep -s 2
-        } until (-not $flagsNeeded)
+        if ($account.account -eq "HarnessEvents") {
+            # Do specific things for HarnessEvents
+            Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
+            Send-Update -t 1 -c "Removing Harness org: $($account.org)"
+            $uri = "https://app.harness.io/ng/api/organizations/$($account.org)?accountIdentifier=$($account.id)"
+            Invoke-RestMethod -Method 'DEL' -headers $HarnessHeaders -uri $uri | Out-Null
+        }
+        else {
+            Send-Update -t 2 -c "NEED TO REDO LOGIC HERE for V2 version of customer account org cleanup!"
+            # $featureFlagsStart = Get-Content -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
+            # $currentFlags = Get-FeatureFlagStatus
+            # $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+            # foreach ($flag in $flagsNeeded) {
+            #     Update-FeatureFlag -flag $flag.Name -value $flag.Value
+            # }
+            # do {
+            #     $currentFlags = Get-FeatureFlagStatus
+            #     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+            #     Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
+            #     Start-Sleep -s 2
+            # } until (-not $flagsNeeded)
+        }
     }
 }
 function Remove-Organization {
