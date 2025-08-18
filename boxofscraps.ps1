@@ -1298,6 +1298,11 @@ function Remove-EventV2 {
         [string]
         $id
     )
+    Get-GoogleAccessToken
+    $script:HarnessFFHeaders = @{
+        'x-api-key'    = $config.HarnessFFToken
+        'Content-Type' = 'application/json'
+    }
     Send-Update -t 1 -c "Deleting google event $email"
     $members = Get-GroupMembers -s -groupEmail $email
     foreach ($member in $members.members) {
@@ -2738,7 +2743,6 @@ function Remove-HarnessEventDetailsV2 {
             Start-Sleep -s 2
         } until (-not $flagsNeeded)
     }
-}
 }
 function Remove-Organization {
     # !!! This is only used in shared environments or when testing !!!
