@@ -530,19 +530,27 @@ function Get-JanitorMode {
             # Event is still active- record it so we can wipe out any orphans later.
             # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
             $validEvents += $e.GoogleEventEmail
-            $validGCPProjects += $e.GoogleProjectId
-            if ($e.HarnessAccount -eq "HarnessEvents") {
-                $validOrgs += $e.HarnessOrg
-            }
+            if ($e.GoogleProjectId) { $validGCPProjects += $e.GoogleProjectId }
+            $validAWSProjects += $e.AWSProjectId
+            $validAzureProjects += $e.AzureProjectId
             Send-Update -t 1 -c "$($e.GoogleEventEmail) is still valid with $([Math]::ROUND($maxEventHours - $TimeDiff.TotalHours,1))h remaining."
         }
     }
-    Send-Update -t 1 -c "$($validEvents.count) open event(s)."
-    Send-Update -t 1 -c "$($validOrgs.count) organization(s) open in HarnessEvents community account."
-    Send-Update -t 1 -c "$($validGCPProjects.count) google project(s)."
-    $gcpProjects = Get-GCP-ProjectList
-    Send-Update -t 1 -c "$gcpProjects total google projects."
+    Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
+    Remove-HarnessEventDetailsV2 -accounts $expiredOrgs
+    # Remove unattached google events
+    $eventGroups = Get-UserGroups -allEvents
+    Send-Update -t 1 -c "$($validEvents.count)/$($eventGroups.count) valid events."
+    foreach ($e in $eventGroups) {
+        if ($validEvents -notcontains $e.email) {
+            Send-Update -t 1 -c "$($e.email) is no longer valid."
+            Remove-EventV2 -email $e.email -id $e.id
+        }
+    }
     #Remove unattached google projects
+    $gcpProjects = Get-GCP-ProjectList
+    $validGCPProjects
+    Send-Update -t 1 -c "$($validGCPProjects.count)/$($gcpProjects.count) valid google project(s)."
     foreach ($project in $gcpProjects) {
         write-host $project
         # if ($project.name.substring(0,6) -ne "event-") {
