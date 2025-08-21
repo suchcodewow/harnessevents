@@ -1,0 +1,36 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "PowerShell: Launch Current File",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-c", "-v"]
+    },
+    {
+      "name": "PowerShell: Headless",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-c", "-v", "-headless", "-userCount 2", "-eventName MyEventName"]
+    },
+    {
+      "name": "PowerShell: Create Random new event",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-c", "-v", "-headless", "-userCount 1"]
+    },
+    {
+      "name": "PowerShell: Janitor",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-janitorMode", "-c", "-v", "-hourLimit 4"]
+    }
+  ]
+}

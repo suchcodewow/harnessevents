@@ -467,7 +467,7 @@ function Get-HeadlessMode {
     }
     else { 
         # this will use the cloudsdk account- typically used for daily testing
-        $currentUser = gcloud auth list --format='value(account)'
+        $currentUser = gcloud auth list --format='value(account)' --filter=status=active
     }
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
@@ -478,7 +478,7 @@ function Get-HeadlessMode {
     if ($azure) { Set-Prefs -k "UseAzureClassroom" -v "ENABLED" }
     else { Set-PRefs -k "UseAzureClassroom" }
     if ($userCount) { Set-Prefs -k "UserEventCount" -v $userCount }
-    else { Set-Prefs -k "UserEventCount" -v 3 }
+    else { Set-Prefs -k "UserEventCount" -v 1 }
     if ($eventName) { Set-Prefs -k "EventName" -v $eventName }
     else { Set-Prefs -k "EventName" -v $(Get-UserName) }
     # Currently the only required item is some kind of username
@@ -573,12 +573,12 @@ function Get-RemoveAuto {
     if (-not $removeauto) {
         return
     }
-    Send-Update -t 1 -c "Running event removal test"
+    Send-Update -t 1 -c "Running event removal"
     # Error out with any problems
     $ErrorActionPreference = "Stop"
     Set-Prefs -k "removeauto" -v $true
     Remove-Event
-    Send-Update -t 1 -c "End Removal Test"
+    Send-Update -t 1 -c "End Removal"
     exit
 }
 
@@ -790,17 +790,24 @@ function Get-GoogleAccessToken {
     }
     # Refresh token
     Send-Update -t 1 -c "Refreshing token"
-    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
-    if ($project.count -ne 1) {
+    if ($config.GoogleUser.contains("@harness.io")) {
+        $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
+    }
+    if ($config.GoogleUser.contains("cloudsdk")) {
+        $initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+    }
+    if ($initProject.count -ne 1) {
         Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
         exit
     }
-    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
-    Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($config.AdminProjectId)" | Out-File -FilePath harnessevents.json
+    Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($initProject.projectId)" | Out-File -FilePath harnessevents.json
     if (!(Test-Path("harnessevents.json"))) {
         Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
         exit
     }
+    Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
+    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
     # Sneak in grabbing the Harness Feature Flag token and HarnessEvents PATeven though this is a google function. shhhhh!
     if (-not $config.HarnessFFToken) {
         $HarnessFFToken = Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsFF' --project=$($config.AdminProjectId)" 
@@ -810,7 +817,6 @@ function Get-GoogleAccessToken {
         $HarnessEventsPAT = Send-Update -t 1 -c "Snagging HarnessEvents PAT" -r "gcloud secrets versions access latest --secret='HarnessEventsPAT' --project=$($config.AdminProjectId)"
         Set-Prefs -k "HarnessEventsPAT" -v $HarnessEventsPAT
     }
-    Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
     $authorizationCode = Send-Update -t 1 -c "Retrieving account token" -r "gcloud auth print-access-token --scopes='https://www.googleapis.com/auth/admin.directory.user https://www.googleapis.com/auth/admin.directory.group'"
     if ($authorizationCode) {
         # Save valid token
@@ -828,7 +834,7 @@ function Get-GoogleAccessToken {
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
     }
-    if (-not $headless -and -not $janitorMode) {
+    if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     }
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
@@ -897,7 +903,8 @@ function Get-GoogleApiAccessToken {
     Set-Prefs -k "GoogleAppToken" -v $response.access_token
     Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
 }
-function Get-GoogleAppToken {
+function Get-GoogleAppToken-DONOTUSE {
+    # DEPRECATED
     # Bypass this is running as a deployment test - it won't have the ability to write out a google sheet
     if ($config.headless) {
         return
@@ -1550,8 +1557,8 @@ function Save-EventDetails {
     } | ConvertTo-Json -Depth 20
     invoke-restmethod -Method 'POST' -uri $uriResize -body $bodyResize -Headers $appHeaders -ContentType "application/json" | out-Null
     Send-Update -t 1 -c "-------------------------------------------------------"
-    Send-Update -t 1 -c "Your event has been updated! Direct workshop sheet link:  https://docs.google.com/spreadsheets/d/$($fileId)"
-    Send-Update -t 1 -c "Or open your Google Drive and navigate to: <your drive>/HarnessEvents/$($config.GoogleEventName)"
+    Send-Update -t 1 -c "Your event has been updated:  https://docs.google.com/spreadsheets/d/$($fileId)"
+    #Send-Update -t 1 -c "Or open your Google Drive and navigate to: <your drive>/HarnessEvents/$($config.GoogleEventName)"
     Set-Prefs -k "EventLink" -v "https://docs.google.com/spreadsheets/d/$($fileId)"
     Save-Event
 }
