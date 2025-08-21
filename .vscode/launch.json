@@ -26,11 +26,11 @@
       "args": ["-c", "-v", "-headless", "-userCount 1"]
     },
     {
-      "name": "PowerShell: Janitor",
+      "name": "PowerShell: Remove My Events",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-janitorMode", "-c", "-v", "-hourLimit 4"]
+      "args": ["-janitorMode", "-c", "-v"]
     }
   ]
 }

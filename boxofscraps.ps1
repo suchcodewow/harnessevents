@@ -453,7 +453,6 @@ function Test-PreFlight {
 #Automated Functions
 function Get-HeadlessMode {
     # Run a headless automate deploy if cmd line switch used
-    # The process expects `gcloud auth activate-service-account` was already run with clousdk service account
     if (-not $headless) {
         return
     }
@@ -498,10 +497,13 @@ function Get-JanitorMode {
     }
     if ($hourLimit) {
         $maxEventHours = $hourLimit
+        $emailTarget = "notapplicable"
     }
     else {
-        Send-Update -t 2 -c "The -hourLimit <hours> flag must be set, you silly billy."
-        exit
+        # Send-Update -t 2 -c "The -hourLimit <hours> flag must be set, you silly billy."
+        # exit
+        $maxEventHours = 1000000
+        $emailTarget = $config.GoogleUser
     }
     Send-Update -t 1 -c "Running event cleanup"
     $validEvents = @()
@@ -516,7 +518,7 @@ function Get-JanitorMode {
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
         $TimeDiff = $(Get-Date) - $e.GoogleAppTokenTimestamp
         # if event is expired, mark it for removal
-        if ($TimeDiff.TotalHours -gt $maxEventHours) {
+        if ($TimeDiff.TotalHours -gt $maxEventHours -or $e.GoogleUser -eq $emailTarget) {
             Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
             if ($e.HarnessAccount -and $e.HarnessOrg -and $e.HarnessAccountId -and $e.HarnessPat) {
                 $expiredOrgs += [PSCustomObject]@{
@@ -1429,7 +1431,7 @@ function Save-EventDetails {
     Send-Update -t 0 -c "uri to check for google folder: $uri"
     $response = invoke-restmethod -Method 'GET' -uri $uri -Headers $appHeaders -ContentType "application/json"
     if ($response.files) {
-        Send-Update -t 0 -c "$($config.GoogleUser) Google Drive folder already exists- skipping creation"
+        Send-Update -t 0 -c "Google Drive folder already exists- skipping creation"
         $parentFolder = $response.files.id
     }
     else {
