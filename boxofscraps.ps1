@@ -1169,11 +1169,11 @@ function New-Group {
         }
         else {
             $counter++
-            if ($counter -gt 10) {
+            if ($counter -gt 30) {
                 Send-Update -t 2 -c "Group creation failed after 10 tries!"
                 exit
             }
-            Start-sleep -s 2
+            Start-sleep -s 3
         }
     } until ($success)
     #Get-UserGroups
