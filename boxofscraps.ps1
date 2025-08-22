@@ -8,7 +8,7 @@ param (
     [string] $googleCloudProjectOverride,   # override project creation to use a specific project
     [switch] $headless,                     # deploy automatically. Enables [HEADLESS MODE] parameters
     [int] $hourLimit,                       # [JANITOR MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
-    [string] $eventName,                    # [HEADLESS MODE] specifiy event name`
+    [string] $eventName,                    # [HEADLESS MODE] specify event name
     [string] $instructorName,               # [HEADLESS MODE] specify instructorName (defaults to current user)
     [switch] $help,                         # show other command options and exit
     [switch] $janitorMode,                  # sweep sweep! Enables [JANITOR MODE] parameterse
@@ -530,7 +530,13 @@ function Get-JanitorMode {
         $TimeDiff = $(Get-Date) - $e.GoogleAppTokenTimestamp
         # if event is expired, mark it for removal
         if ($TimeDiff.TotalHours -gt $maxEventHours -or $e.GoogleUser -eq $emailTarget) {
-            Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
+            if ($emailTarget) {
+                # Update based on matching email
+                Send-Update -t 1 -c "Event $($e.GoogleEventName) is one of your events marked to remove."
+            }
+            else {
+                Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h."
+            }
             if ($e.HarnessAccount -and $e.HarnessOrg -and $e.HarnessAccountId -and $e.HarnessPat) {
                 $expiredOrgs += [PSCustomObject]@{
                     account = $e.HarnessAccount
@@ -576,7 +582,6 @@ function Get-JanitorMode {
             Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
             Remove-GCPProjectV2 -id $project.projectId
         }
-        
     }
     if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
