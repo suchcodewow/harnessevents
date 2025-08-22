@@ -6,12 +6,12 @@ param (
     [switch] $cloudCommands,                # enable to show commands
     [switch] $gcp,                          # enable gcp classroom (optional for headless mode)
     [string] $googleCloudProjectOverride,   # override project creation to use a specific project
-    [switch] $headless,                     # deploy automatically. all [HEADLESS MODE] parameters become mandatory
-    [int] $hourLimit,                    # [JANITOR MODE] max event lifespan in hours
-    [string] $eventName,                    # [HEADLESS MODE] specifiy event name
-    [string] $instructorName,               # [HEADLESS MODE] specify instructorName
+    [switch] $headless,                     # deploy automatically. Enables [HEADLESS MODE] parameters
+    [int] $hourLimit,                       # [JANITOR MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
+    [string] $eventName,                    # [HEADLESS MODE] specifiy event name`
+    [string] $instructorName,               # [HEADLESS MODE] specify instructorName (defaults to current user)
     [switch] $help,                         # show other command options and exit
-    [switch] $janitorMode,                  # sweep sweep! all [JANITOR MODE] parameterse become required
+    [switch] $janitorMode,                  # sweep sweep! Enables [JANITOR MODE] parameterse
     [switch] $logReset,                     # enable to reset log between runs
     [switch] $removeauto,                   # remove all elements based on current conf file
     [switch] $verbose,                      # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
@@ -488,6 +488,9 @@ function Get-HeadlessMode {
     New-Event
     Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
     Sync-Event
+    if ($config.GoogleUser.contains("@harness.io")) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
     Send-Update -t 1 -c "End Headless Mode"
     exit
 }
@@ -495,13 +498,21 @@ function Get-JanitorMode {
     if (-not $janitormode) {
         return
     }
+    # Use cli provided instructor name if present
+    if ($instructorName) {
+        $currentUser = $instructorName
+    }
+    else { 
+        # this will use the cloudsdk account- typically used for daily testing
+        $currentUser = gcloud auth list --format='value(account)' --filter=status=active
+    }
+    Set-Prefs -k "GoogleUser" -v $currentUser
+    Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
     if ($hourLimit) {
         $maxEventHours = $hourLimit
         $emailTarget = "notapplicable"
     }
     else {
-        # Send-Update -t 2 -c "The -hourLimit <hours> flag must be set, you silly billy."
-        # exit
         $maxEventHours = 1000000
         $emailTarget = $config.GoogleUser
     }
@@ -567,6 +578,9 @@ function Get-JanitorMode {
         }
         
     }
+    if ($config.GoogleUser.contains("@harness.io")) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
     Send-Update -t 1 -c "End event cleanup" 
     exit
 }
@@ -580,6 +594,9 @@ function Get-RemoveAuto {
     $ErrorActionPreference = "Stop"
     Set-Prefs -k "removeauto" -v $true
     Remove-Event
+    if ($config.GoogleUser.contains("@harness.io")) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
     Send-Update -t 1 -c "End Removal"
     exit
 }
@@ -792,7 +809,7 @@ function Get-GoogleAccessToken {
     }
     # Refresh token
     Send-Update -t 1 -c "Refreshing token"
-    if ($config.GoogleUser.contains("@harness.io")) {
+    if ($config.GoogleUser -and $config.GoogleUser.contains("@harness.io")) {
         $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
     }
     if ($config.GoogleUser.contains("cloudsdk")) {
@@ -835,9 +852,6 @@ function Get-GoogleAccessToken {
     }
     else {
         Send-Update -t 2 -c "Unexpected error while retrieving access token."
-    }
-    if ($config.GoogleUser.contains("@harness.io")) {
-        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     }
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
