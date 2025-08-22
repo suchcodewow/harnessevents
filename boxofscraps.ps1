@@ -1,12 +1,12 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
-# VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing } of each function
+# VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing '}' of each function
 param (
     [switch] $aws,                          # enable aws classroom (optional for headless mode)
     [switch] $azure,                        # enable azure classroom (optional for headless mode)
     [switch] $cloudCommands,                # enable to show commands
     [switch] $gcp,                          # enable gcp classroom (optional for headless mode)
     [string] $googleCloudProjectOverride,   # override project creation to use a specific project
-    [switch] $headless,                     # deploy automatically. Enables [HEADLESS MODE] parameters
+    [switch] $headlessMode,                     # deploy automatically. Enables [HEADLESS MODE] parameters
     [int] $hourLimit,                       # [JANITOR MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
     [string] $eventName,                    # [HEADLESS MODE] specify event name
     [string] $instructorName,               # [HEADLESS MODE] specify instructorName (defaults to current user)
@@ -453,7 +453,7 @@ function Test-PreFlight {
 #Automated Functions
 function Get-HeadlessMode {
     # Run a headless automate deploy if cmd line switch used
-    if (-not $headless) {
+    if (-not $headlessMode) {
         return
     }
     Set-Prefs -k "headless" -v $true
