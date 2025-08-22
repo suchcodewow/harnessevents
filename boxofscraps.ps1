@@ -545,7 +545,7 @@ function Get-JanitorMode {
                     pat     = $e.HarnessPat
                     env     = $e.HarnessEnv
                 }
-                Send-Update -t 1 -c "Added $($e.HarnessOrg) in $($e.HarnessAcount) to expired events."
+                Send-Update -t 1 -c "Added $($e.HarnessOrg) in $($e.HarnessAccount) to expired events."
             }
             else {
                 Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat)"
@@ -1395,9 +1395,11 @@ function Save-EventDetails {
     $members | Add-Member -MemberType NoteProperty -Name "HarnessLink" -Value ""
     $members | Add-Member -MemberType NoteProperty -Name "LabLink" -Value ""
     # Create array of arrays suitable for dropping into googley sheet
+    $orgLink = "https://app.harness.io/ng/account/$($config.HarnessAccountId)/module/cd/orgs/$($config.HarnessOrg)"
+    $orgCell = '=HYPERLINK("' + $orgLink + '","Org Link")'
     $exportArray = @()
     $exportArray += ,@("Open this in an incognito window!")
-    $exportArray += ,@($config.GoogleEventName)
+    $exportArray += ,@($config.GoogleEventName, $orgCell)
     $exportArray += ,@(" ")
     $exportArray += ,@("    Class Email Address    ","  Class Password  ","  Direct Project Link  ","  Lab Guide  ","  Your Name  ","  Where are you from?  ","  Vacations-Hot or Cold?  ")
     foreach ($member in $members) {
