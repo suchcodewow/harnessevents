@@ -498,7 +498,7 @@ Set-Prefs -k "StartTime" -v $(Get-Date -asUTC)
 # Main
 #pwsh --version
 write-host $(gcloud auth activate-service-account --key-file=key.json)
-$maxProjectAge = 4
+$maxProjectAge = 72
 $projects = Get-ProjectList
 Send-Update -t 1 -c "$($projects.count) total projects to check."
 foreach ($project in $projects) {
