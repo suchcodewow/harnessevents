@@ -468,6 +468,13 @@ function Get-HeadlessMode {
         # this will use the cloudsdk account- typically used for daily testing
         $currentUser = gcloud auth list --format='value(account)' --filter=status=active
     }
+    # Make sure user isn't trying to run this as cloudsdk
+    if ($currentUser.Contains("cloudsdk")) {
+        Send-Update -t 2 -c "You're running as the HarnessEvents CloudSDK service account."
+        Send-Update -t 1 -c "Specify an email with the -instructorName flag -OR-"
+        Send-Update -t 1 -c "Switch to your work email with gcloud auth login."
+        exit
+    }
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
     if ($gcp) { Set-Prefs -k "UseGoogleClassroom" -v "ENABLED" }
