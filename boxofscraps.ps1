@@ -1,17 +1,17 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing '}' of each function
 param (
-    [switch] $aws,                          # enable aws classroom (optional for headless mode)
-    [switch] $azure,                        # enable azure classroom (optional for headless mode)
+    [switch] $aws,                          # [HEADLESS MODE] create aws classroom for event TODO
+    [switch] $azure,                        # [HEADLESS MODE] create azure classroom for event TODO
     [switch] $cloudCommands,                # enable to show commands
-    [switch] $gcp,                          # enable gcp classroom (optional for headless mode)
+    [switch] $gcp,                          # [HEADLESS MODE] create gcp classroom for event
     [string] $googleCloudProjectOverride,   # override project creation to use a specific project
-    [switch] $headlessMode,                     # deploy automatically. Enables [HEADLESS MODE] parameters
+    [switch] $headlessMode,                 # deploy automatically. Enables [HEADLESS MODE] parameters
     [int] $hourLimit,                       # [JANITOR MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
     [string] $eventName,                    # [HEADLESS MODE] specify event name
     [string] $instructorName,               # [HEADLESS MODE] specify instructorName (defaults to current user)
     [switch] $help,                         # show other command options and exit
-    [switch] $janitorMode,                  # sweep sweep! Enables [JANITOR MODE] parameterse
+    [switch] $janitorMode,                  # sweep sweep! Enables [JANITOR MODE] parameters
     [switch] $logReset,                     # enable to reset log between runs
     [switch] $removeauto,                   # remove all elements based on current conf file
     [switch] $verbose,                      # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
@@ -523,7 +523,7 @@ function Get-JanitorMode {
     $validAWSProjects = @()
     $validAzureProjects = @()
     Get-GoogleAccessToken
-    # load all open events
+    # Load all open events
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
     foreach ($eventJson in $openEvents) {
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
@@ -575,7 +575,6 @@ function Get-JanitorMode {
     }
     #Remove unattached google projects
     $gcpProjects = Get-GCP-ProjectList
-    $validGCPProjects
     Send-Update -t 1 -c "$($validGCPProjects.count) valid / $($gcpProjects.count) total google project(s)."
     foreach ($project in $gcpProjects) {
         if ($validGCPProjects -notcontains $project.projectId) {
@@ -585,6 +584,9 @@ function Get-JanitorMode {
     }
     if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
+    if ($hourLimit) {
+        Remove-HarnessEventsUsers
     }
     Send-Update -t 1 -c "End event cleanup" 
     exit
@@ -701,6 +703,16 @@ function Add-UserToGroup {
     Send-Update -t 0 -c "Body: $body"
     $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
+}
+function Get-Allusers {
+    Get-GoogleAccessToken
+    $uri = "https://admin.googleapis.com/admin/directory/v1/users?domain=harnessevents.io"
+    Send-Update -t 1 -c "Retrieving all users"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    if ($response.users) {
+        return $response.users
+    }
+    return $false
 }
 function Get-ClassroomStatus {
     $gcpStatus = Get-DelegateStatus -d gcp
@@ -1355,6 +1367,31 @@ function Remove-EventV2 {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
+}
+function Remove-HarnessEventsUsers {
+    # Remove any orphaned users from HarnessEvents keeping it tidy
+    $googleUsers = Get-Allusers
+    $HarnessHeaders = @{
+        'x-api-key'    = $config.HarnessEventsPAT
+        'Content-Type' = 'application/json'
+    }
+    $body = @{
+        "searchTerm" = "harnessevents.io"
+    } | ConvertTo-Json
+    $accountID = $config.HarnessEventsPAT.split(".")[1]
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$accountID"
+    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST' -body $body
+    $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
+    foreach ($user in $harnessUsers) {
+        if ($googleUsers.primaryEmail -notcontains $user.email) {
+            Send-Update -t 1 -c "Removing extraneous user: $($user.email)"
+            $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$accountID"
+            invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
+        }
+        else {
+            Send-Update -t 1 -c "$($user.email) is valid."
+        }
+    }
 }
 function Remove-User {
     [CmdletBinding()]
