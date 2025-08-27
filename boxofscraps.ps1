@@ -471,8 +471,7 @@ function Get-HeadlessMode {
     # Make sure user isn't trying to run this as cloudsdk
     if ($currentUser.Contains("cloudsdk")) {
         Send-Update -t 2 -c "You're running as the HarnessEvents CloudSDK service account."
-        Send-Update -t 1 -c "Specify an email with the -instructorName flag -OR-"
-        Send-Update -t 1 -c "Switch to your work email with gcloud auth login."
+        Send-Update -t 2 -c "Switch to your work account with <gcloud config set account 'your email'>"
         exit
     }
     Set-Prefs -k "GoogleUser" -v $currentUser
@@ -2460,10 +2459,7 @@ function Add-SecretJson {
     $fileContent.Headers.ContentDisposition = $fileHeader
     $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("text/plain")
     $multipartContent.Add($fileContent)
-    $templateheaders = @{
-        'x-api-key' = "pat.fjf_VfuITK2bBrMLg5xV7g.685eb2c56cbe10049b61e958.zBDRQLxrtoOtPkQE9qHy"
-    }
-    Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $templateheaders
+    Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $HarnessHeaders
 }
 function Add-Variables {
     # Define the variables here that we want to use
@@ -3039,9 +3035,9 @@ function New-GCP-Project {
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
         # Create worker, get keys, add to IAM
-        #Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
-        #Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
-        #Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
+        Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
+        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor' --project=$($config.GoogleProjectId)"
+        Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         # Enable API's needed for workshops
         $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
         Foreach ($api in $projectApis) {
