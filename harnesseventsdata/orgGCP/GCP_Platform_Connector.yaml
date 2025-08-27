@@ -1,5 +1,5 @@
 connector:
-  name: GCP_Platform_Connector
+  name: GCP Platform Connector
   identifier: GCP_Platform_Connector
   description: ""
   accountIdentifier: none
@@ -7,9 +7,9 @@ connector:
   type: Gcp
   spec:
     credential:
-      type: InheritFromDelegate
-    delegateSelectors:
-      - gcp
-    executeOnDelegate: true
+      type: ManualConfig
+      spec:
+        secretKeyRef: org.GCP_Service_Account
+    executeOnDelegate: false
     proxy: false
     ignoreTestConnection: false

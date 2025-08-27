@@ -816,7 +816,7 @@ function Get-GoogleLogin {
 function Get-GoogleAccessToken {
     # Check for valid token
     if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
-        # Check if token is over 50m old
+        # Check if token is over 30m old
         $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
         if ($TimeDiff.TotalMinutes -lt 30) {
             Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
@@ -830,7 +830,7 @@ function Get-GoogleAccessToken {
     else {
         Send-Update -t 1 -c "Token or timestemp missing."
     }
-    # Refresh token
+    # Refresh token if older than 30m
     Send-Update -t 1 -c "Refreshing token"
     if ($config.GoogleUser -and $config.GoogleUser.contains("@harness.io")) {
         $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
@@ -2429,32 +2429,44 @@ function Add-ProjectAdmin {
     }
 }
 function Add-SecretJson {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $fileName, #name of json file
+        [Parameter(Mandatory = $true)]
+        [string]
+        $id #ID of secret in Harness
+    )
+    $name = $id.replace("_"," ")
     # Add Json Secret File
     $uri = "https://app.harness.io/ng/api/v2/secrets/files?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     $spec = @{
         secret = @{
             type          = 'SecretFile'
-            name          = $secretName
-            identifier    = $secretID
+            name          = $name
+            identifier    = $id
             orgIdentifier = $($config.HarnessOrg)
             spec          = @{
                 secretManagerIdentifier = "org.harnessSecretManager"
             }
         }
     } | ConvertTo-Json
-
+    $HarnessHeaders = @{
+        'x-api-key'    = $config.HarnessPAT
+        'Content-Type' = 'application/json'
+    }
     $multipartContent = [System.Net.Http.MultipartFormDataContent]::new()
-
     $stringHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new("form-data")
     $stringHeader.Name = "spec"
     $StringContent = [System.Net.Http.StringContent]::new($spec)
     $StringContent.Headers.ContentDisposition = $stringHeader
     $multipartContent.Add($stringContent)
-    $multipartFile = 'worker1.json'
+    $multipartFile = $fileName
     $FileStream = [System.IO.FileStream]::new($multipartFile, [System.IO.FileMode]::Open)
     $fileHeader = [System.Net.Http.Headers.ContentDispositionHeaderValue]::new("form-data")
     $fileHeader.Name = "file"
-    $fileHeader.FileName = 'worker1.json'
+    $fileHeader.FileName = $fileName
     $fileContent = [System.Net.Http.StreamContent]::new($FileStream)
     $fileContent.Headers.ContentDisposition = $fileHeader
     $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("text/plain")
@@ -2993,7 +3005,7 @@ function New-GCP-Project {
         Set-Prefs -k "GoogleProjectId" -v $googleCloudProjectOverride
         Set-Prefs -k "GoogleProject" -v "Command Line Override"
         Set-Prefs -k "GoogleRegion" -v "us-central1"
-        $projectCheck = Send-Update -t 1 -c "Check Project Override availability" -r "gcloud projects list --filter='id:$($config.GoogleProjectId)' --format=json" | convertfrom-json
+        $projectCheck = Send-Update -t 1 -c "Check Project Override exists" -r "gcloud projects list --filter='id:$($config.GoogleProjectId)' --format=json" | convertfrom-json
     }
     else {
         # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
@@ -3034,10 +3046,6 @@ function New-GCP-Project {
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
-        # Create worker, get keys, add to IAM
-        Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
-        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud iam service-accounts add-iam-policy-binding worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor' --project=$($config.GoogleProjectId)"
-        Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         # Enable API's needed for workshops
         $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
         Foreach ($api in $projectApis) {
@@ -3054,7 +3062,15 @@ function New-GCP-Project {
             $neededAPIs = Compare-Object $projectAPIs $enabledAPIs.config.name | Where-Object { $_.SideIndicator -eq "<=" }
             Start-Sleep -s 2
         } until (-not $neededAPis)
+        # Create worker, get keys, add to IAM
+        Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
+        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud project add-iam-policy-binding $($config.GoogleProjectId) --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
+        Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
+        Add-SecretJson -fileName worker1.json -id GCP_Service_Account
     }
+    # Load GCP-specific templates
+    Add-OrgYaml -YamlFolder ./harnesseventsdata/orgGCP
+    # Move on to loading GCP resources
     New-GCP-Resources
 }
 function New-GCP-Resources {
@@ -3165,6 +3181,7 @@ function Set-GCP-Project {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
+Add-SecretJson -fileName worker1.json -id GCP_Service_Account
 # Automated options
 Get-HeadlessMode
 Get-RemoveAuto
