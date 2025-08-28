@@ -1951,8 +1951,6 @@ function Add-HarnessEventDetails {
     foreach ($folder in $OrgContent) {
         Add-OrgYaml -YamlFolder "$folder/*.yaml"
     }
-    # Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgEnvironments/*.yaml"
-    # Add-OrgYaml -YamlFolder "./harnesseventsdata/OrgTemplates/*.yaml"
     Add-Policies
     Add-AttendeeRole
     $attendees = Get-GroupMembers
@@ -2471,60 +2469,91 @@ function Add-SecretJson {
     $fileContent.Headers.ContentDisposition = $fileHeader
     $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse("text/plain")
     $multipartContent.Add($fileContent)
-    Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $HarnessHeaders
+    
+    Try {
+        Send-Update -t 1 -c "Adding/Updating secret json: $name"
+        Invoke-WebRequest -Uri $uri -Body $multipartContent -Method 'POST' -headers $HarnessHeaders
+    }
+    Catch {
+        # Generates a System.Management.Automation.ErrorRecord
+        if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+            $errorResponse = $_ | Convertfrom-Json
+            if ($errorResponse.message.contains("already exists")) {
+                Send-Update -t 0 -c "Secret Json: $id already exists."
+            }
+            else {
+                Send-Update -t 2 -c "Failed to create secret: $id with error: $errorResponse.message"
+                Send-Update -t 0 -c "URI: $uri"
+                Send-Update -t 0 -c "ContentType: $multipartContent"
+                Send-Update -t 0 -c "Headers: $($HarnessHeaders| Select-Object -Property *)"
+                Send-Update -t 0 -c "template yaml:"
+                Send-Update -t 0 -c $body
+            }  
+        }
+        else {
+            Send-Update -t 2 -c "Failed to create secret: $id with error: $errorResponse.message"
+            Send-Update -t 0 -c "URI: $uri"
+            Send-Update -t 0 -c "ContentType: $multipartContent"
+            Send-Update -t 0 -c "Headers: $($HarnessHeaders| Select-Object -Property *)"
+            Send-Update -t 0 -c "template yaml:"
+            Send-Update -t 0 -c $body
+        }
+    }
 }
 function Add-Variables {
     # Define the variables here that we want to use
     $variables = @(
-        @{"name" = "google_project"; "value" = $config.GoogleProjectId },
+        @{"name" = "google_project_id"; "value" = $config.GoogleProjectId },
         @{"name" = "google_region";"value" = $config.GoogleRegion },
         @{"name" = "google_resource_id";"value" = $config.GoogleResourceID }
     )
     # Install all variables at the org level.
     foreach ($variable in $variables) {
-        $uri = "https://app.harness.io/ng/api/variables?accountIdentifier=$($config.HarnessAccountId)"
-        $body = @{
-            variable = @{
-                name          = $variable.name.replace("_"," ")
-                identifier    = $variable.name
-                orgIdentifier = $($config.HarnessOrg)
-                description   = ""
-                type          = "String"
-                spec          = @{
-                    valueType     = "FIXED"
-                    fixedValue    = $variable.value ?? "replaceme"
-                    allowedValues = @()
-                    defaultValue  = ""
+        if ($variable.value) {
+            $uri = "https://app.harness.io/ng/api/variables?accountIdentifier=$($config.HarnessAccountId)"
+            $body = @{
+                variable = @{
+                    name          = $variable.name.replace("_"," ")
+                    identifier    = $variable.name
+                    orgIdentifier = $($config.HarnessOrg)
+                    description   = ""
+                    type          = "String"
+                    spec          = @{
+                        valueType     = "FIXED"
+                        fixedValue    = $variable.value ?? "thisshouldnothappen"
+                        allowedValues = @()
+                        defaultValue  = ""
+                    }
                 }
+            } | ConvertTo-Json -Depth 5
+            Send-Update -t 1 -c "Adding/Updating variable $($variable.name)"
+            Try {
+                Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $HarnessHeaders | Out-null
             }
-        } | ConvertTo-Json -Depth 5
-        Send-Update -t 1 -c "Adding/Updating variable $($variable.name)"
-        Try {
-            Invoke-RestMethod -uri $uri -body $body -Method 'POST' -headers $HarnessHeaders | Out-null
-        }
-        Catch {
-            # Generates a System.Management.Automation.ErrorRecord
-            if ($_.Exception.Response.StatusCode.value__ -ne 401) {
-                $errorResponse = $_ | Convertfrom-Json
-                if ($errorResponse.message.contains("already exists")) {
-                    Send-Update -t 0 -c "Template: $templateId already exists."
+            Catch {
+                # Generates a System.Management.Automation.ErrorRecord
+                if ($_.Exception.Response.StatusCode.value__ -ne 401) {
+                    $errorResponse = $_ | Convertfrom-Json
+                    if ($errorResponse.message.contains("already exists")) {
+                        Send-Update -t 0 -c "Template: $templateId already exists."
+                    }
+                    else {
+                        Send-Update -t 2 -c "Failed to create variable: $($variable.name)"
+                        Send-Update -t 0 -c "URI: $uri"
+                        Send-Update -t 0 -c "ContentType: $contentType"
+                        Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
+                        Send-Update -t 0 -c "body:"
+                        Send-Update -t 0 -c $body
+                    }  
                 }
                 else {
-                    Send-Update -t 2 -c "Failed to create variable: $($variable.name)"
+                    Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
                     Send-Update -t 0 -c "URI: $uri"
                     Send-Update -t 0 -c "ContentType: $contentType"
                     Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
-                    Send-Update -t 0 -c "body:"
+                    Send-Update -t 0 -c "template yaml:"
                     Send-Update -t 0 -c $body
-                }  
-            }
-            else {
-                Send-Update -t 2 -c "Failed to create template: $templateId. 401: $_)"
-                Send-Update -t 0 -c "URI: $uri"
-                Send-Update -t 0 -c "ContentType: $contentType"
-                Send-Update -t 0 -c "Headers: $($templateheaders | Select-Object -Property *)"
-                Send-Update -t 0 -c "template yaml:"
-                Send-Update -t 0 -c $body
+                }
             }
         }
     }
@@ -3046,7 +3075,7 @@ function New-GCP-Project {
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
-        # Enable API's needed for workshops
+        # Enable API's needed for events
         $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
         Foreach ($api in $projectApis) {
             send-Update -t 1 -o -c "Enabling $api API" -r "gcloud services enable $api"
@@ -3064,10 +3093,11 @@ function New-GCP-Project {
         } until (-not $neededAPis)
         # Create worker, get keys, add to IAM
         Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1"
-        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud project add-iam-policy-binding $($config.GoogleProjectId) --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
+        Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
         Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         Add-SecretJson -fileName worker1.json -id GCP_Service_Account
     }
+    if (Test-Path worker1.json) { Remove-Item worker1.json }
     # Load GCP-specific templates
     Add-OrgYaml -YamlFolder ./harnesseventsdata/orgGCP
     # Move on to loading GCP resources
@@ -3181,7 +3211,6 @@ function Set-GCP-Project {
 #Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
-Add-SecretJson -fileName worker1.json -id GCP_Service_Account
 # Automated options
 Get-HeadlessMode
 Get-RemoveAuto
