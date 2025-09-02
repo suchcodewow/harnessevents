@@ -363,6 +363,19 @@ function Test-PreFlight {
         Send-Update -t 2 -c "gcloud commands not found. install via mac with: brew install --cask google-cloud-sdk"
         exit
     }
+    # Check if using cloudsdk but there is a normal user account.  Switch if so.
+    $currentUser = gcloud auth list --format='value(account)' --filter=status=active
+    $harnessUser = gcloud auth list --filter=account:'harness.io' --format='value(account)'
+    if ($currentUser.contains("cloudsdk") -and $harnessUser.count -eq 1) {
+        gcloud config set account $harnessUser --no-user-output-enabled
+    }
+    
+}
+function Save-Event {
+    Set-Prefs -k "EventCreateTime" -v $(Get-Date)
+    $datePrefix = $(Get-Date -Uformat "%Y-%m")
+    $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.EventName + ".json"
+    gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName
 }
 
 ## Actions
@@ -408,8 +421,12 @@ function Get-HeadlessMode {
     if ($gcp) { Set-Prefs -k "GoogleClassroom" -v "ENABLED" }
     if ($aws) { Set-Prefs -k "AwsClassroom" -v "ENABLED" }
     if ($azure) { Set-Prefs -k "AzureClassroom" -v "ENABLED" }
-    #Get-GoogleAccessToken
-    #New-Event
+    # Get Google Access token
+    Get-GoogleAccessToken
+    # Save event details to 'open' events json folder
+    Save-Event
+    # Create the event
+    New-Event
     #Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
     #Sync-Event
     if ($config.GoogleUser.contains("@harness.io")) {
@@ -420,34 +437,273 @@ function Get-HeadlessMode {
 }
 
 ## Event Functions
+function Add-UserToGroup {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string] $userEmail,
+        [Parameter()]
+        [string] $groupEmail,
+        [switch] $owner
+    )
+    # Retrieve group key
+    if ($groupEmail) {
+        $groupKey = Get-GroupKey -g $groupEmail
+    }
+    else {
+        $groupKey = $config.GoogleEventId
+    }
+    if (!$groupKey) {
+        Send-Update -t 2 -c "Group Key is missing! Cannot proceed"
+        exit
+    }
+    # Build api call for group
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
+    Send-Update -t 0 -c "Email $userEmail being added to Group URI: $uri"
+    if ($owner) { $role = "OWNER" } else { $role = "MEMBER" }
+    $body = @{
+        "email" = $userEmail
+        "role"  = $role
+    } | ConvertTo-Json
+    Send-Update -t 0 -c "Body: $body"
+    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
+    return $response
+}
+function Get-GoogleAccessToken {
+    # Check for valid token
+    if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
+        # Check if token is over 30m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAccessTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            Send-Update -t 0 -c "Google Workspace Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            $script:headers = @{ "Authorization" = "Bearer $($config.GoogleAccessToken)" }
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google Workspace Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
+    }
+    else {
+        Send-Update -t 1 -c "Token or timestemp missing."
+    }
+    # Refresh token if older than 30m
+    Send-Update -t 1 -c "Refreshing token"
+    if ($config.GoogleUser -and $config.GoogleUser.contains("@harness.io")) {
+        $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
+    }
+    if ($config.GoogleUser.contains("cloudsdk")) {
+        $initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+    }
+    if ($initProject.count -ne 1) {
+        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
+        exit
+    }
+    Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($initProject.projectId)" | Out-File -FilePath harnessevents.json
+    if (!(Test-Path("harnessevents.json"))) {
+        Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
+        exit
+    }
+    Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
+    $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+    Set-Prefs -k "AdminProjectId" -v $($project.projectId)
+    # Sneak in grabbing the Harness Feature Flag token and HarnessEvents PATeven though this is a google function. shhhhh!
+    if (-not $config.HarnessFFToken) {
+        $HarnessFFToken = Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsFF' --project=$($config.AdminProjectId)" 
+        Set-Prefs -k "HarnessFFToken" -v $HarnessFFToken
+    }
+    if (-not $config.HarnessEventsPAT) {
+        $HarnessEventsPAT = Send-Update -t 1 -c "Snagging HarnessEvents PAT" -r "gcloud secrets versions access latest --secret='HarnessEventsPAT' --project=$($config.AdminProjectId)"
+        Set-Prefs -k "HarnessEventsPAT" -v $HarnessEventsPAT
+    }
+    $authorizationCode = Send-Update -t 1 -c "Retrieving account token" -r "gcloud auth print-access-token --scopes='https://www.googleapis.com/auth/admin.directory.user https://www.googleapis.com/auth/admin.directory.group'"
+    if ($authorizationCode) {
+        # Save valid token
+        Set-Prefs -k "GoogleAccessToken" -v $authorizationCode
+        Set-Prefs -k "GoogleAccessTokenTimestamp" -v $(Get-date)
+        # Save the name of the google account to use later
+        $googleServiceAccount = gcloud auth list --filter=status:ACTIVE --format='value(account)'
+        Set-Prefs -k "GoogleServiceAccount" -v $googleServiceAccount
+        # Write out auth headers that can be used anywhere
+        $script:headers = @{
+            "Authorization" = "Bearer $($config.GoogleAccessToken)"
+        }
+        Send-Update -t 0 -c "Successfully retrieved a new token and timestamp."
+    }
+    else {
+        Send-Update -t 2 -c "Unexpected error while retrieving access token."
+    }
+    # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
+    gcloud config set project $config.AdminProjectId --no-user-output-enabled
+    $credentialsJson = Get-Content 'harnessevents.json' -Raw | Convertfrom-Json
+    Set-Prefs -k "ServiceAccountEmail" -v $credentialsJson.client_email
+    $PrivateKey = $credentialsJson.private_key -replace '-----BEGIN PRIVATE KEY-----\n' -replace '\n-----END PRIVATE KEY-----\n' -replace '\n'
+    Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
+    # Cleanup due to Google's stupid requirement that the json be an actual *file*.  Eat it, Google.
+    if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
+}
+function Get-GoogleApiAccessToken {
+    if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
+        # Check if token is over 50m old
+        $TimeDiff = $(Get-Date) - $config.GoogleAppTokenTimestamp
+        if ($TimeDiff.TotalMinutes -lt 30) {
+            $script:appHeaders = @{
+                "Authorization"       = "Bearer $($config.GoogleAppToken)"
+                "x-goog-user-project" = $($config.AdminProjectId)
+            }
+            Send-Update -t 0 -c "Google App Token age is OK: $([math]::round($TimeDiff.TotalMinutes))m."
+            return
+        }
+        else {
+            Send-Update -t 1 -c "Google App Token is too old: $([math]::round($TimeDiff.TotalMinutes))m."
+        }
+    }
+    else {
+        Send-Update -t 1 -c "New token needed"
+    }
+    $PrivateKey = $config.ServiceAccountKey
+    $header = @{
+        alg = "RS256"
+        typ = "JWT"
+    }
+    $headerBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($header | ConvertTo-Json)))
+    $timestamp = [Math]::Round((Get-Date -UFormat %s))
+    $claimSet = @{
+        iss   = $config.ServiceAccountEmail
+        scope = "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets"
+        aud   = "https://oauth2.googleapis.com/token"
+        exp   = $timestamp + 3600
+        iat   = $timestamp
+        # sub   = $TargetUserEmail
+    }
+    $claimSetBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(($claimSet | ConvertTo-Json)))
+    $signatureInput = $headerBase64 + "." + $claimSetBase64
+    $signatureBytes = [System.Text.Encoding]::UTF8.GetBytes($signatureInput)
+    $privateKeyBytes = [System.Convert]::FromBase64String($PrivateKey)
+    $rsaProvider = [System.Security.Cryptography.RSA]::Create()
+    $bytesRead = $null
+    $rsaProvider.ImportPkcs8PrivateKey($privateKeyBytes, [ref]$bytesRead)
+    $signature = $rsaProvider.SignData($signatureBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256, [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    $signatureBase64 = [System.Convert]::ToBase64String($signature)
+    $jwt = $headerBase64 + "." + $claimSetBase64 + "." + $signatureBase64
+    $body = @{
+        grant_type = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+        assertion  = $jwt
+    }
+    $response = Invoke-RestMethod -Uri "https://oauth2.googleapis.com/token" -Method POST -Body $body -ContentType "application/x-www-form-urlencoded"
+    $script:appHeaders = @{
+        Authorization         = 'Bearer {0}' -f $response.access_token
+        "x-goog-user-project" = $($config.AdminProjectId)
+    }
+    # Save valid token
+    Set-Prefs -k "GoogleAppToken" -v $response.access_token
+    Set-Prefs -k "GoogleAppTokenTimestamp" -v $(Get-date)
+}
+function Get-GroupMembers {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string] $groupEmail,
+        [Parameter()]
+        [switch] $splitIntoGroups # organize the results into owners/members and provide a count
+    )
+    Get-GoogleAccessToken
+    # Retrieve group key - or use cached default if none provided
+    if ($groupEmail) {
+        $groupKey = Get-GroupKey -g $groupEmail
+    }
+    else {
+        $groupKey = $config.GoogleEventId
+    }
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups/$groupKey/members"
+    Send-Update -t 0 -c "Getting group members with uri: $uri"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    if ($response.members) {
+        if ($splitIntoGroups) {
+            $groupMembers = @{
+                "owners"      = $response.members | Where-Object { $_.role -eq "OWNER" }
+                "members"     = $response.members | Where-Object { $_.role -eq "MEMBER" }
+                "ownerCount"  = ($response.members | Where-Object { $_.role -eq "OWNER" }).count
+                "memberCount" = ($response.members | Where-Object { $_.role -eq "MEMBER" }).count
+                "groupKey"    = $groupKey
+            }
+            return $groupMembers
+        }
+        else {
+            return $response.members
+        }
+        
+    }
+    return $false
+}
+function Get-User {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $userName
+    )
+    if (!$userName.contains("harnessevents.io")) { $userName = "$userName@harnessevents.io" }
+    $uri = "https://admin.googleapis.com/admin/directory/v1/users?domain=harnessevents.io&query=email='$userName'"
+    Send-Update -t 0 -c "Looking up user with uri: $uri"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    if ($response.users) {
+        return $response.users
+    }
+    return $false
+}
+function New-Group {
+    # Create a new group and confirm it is reachable via API before returning
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $email,
+        [Parameter()]
+        [string]
+        $name
+    )
+    if (!$name) { $name = "new-group" }
+    $body = @{
+        "email" = $email
+        "name"  = $name
+    } | ConvertTo-Json
+    $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$email'"
+    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
+    Send-Update -t 0 -c "Create new group returned: $response"
+    $success = $false
+    $counter = 0
+    Do {
+        Send-Update -t 1 -c "Waiting for group creation..."
+        $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+        if ($response.groups) {
+            Send-Update -t 1 -c "Group $email created successfully!"
+            Set-Prefs -k "GoogleEventName" -v $response.groups.name
+            Set-Prefs -k "GoogleEventId" -v $response.groups.id
+            Set-Prefs -k "GoogleEventEmail" -v $response.groups.email
+            $success = $true
+        }
+        else {
+            $counter++
+            if ($counter -gt 30) {
+                Send-Update -t 2 -c "Group creation failed after 10 tries!"
+                exit
+            }
+            Start-sleep -s 3
+        }
+    } until ($success)
+    #Get-UserGroups
+}
 function New-Event {
-    # Requires config set for: EventName
-    # while (-not $nameselected) {
-    #     if ($config.EventName) {
-    #         $newEvent = $config.EventName
-    #     }
-    #     else {
-    #         $newEvent = read-host -prompt "Name for new event? (lower characters only) to abort"
-    #     }
-    #     if (-not($newEvent)) {
-    #         return
-    #     }
-    # Add an instructor email for this user
+    # Create instructor email for this user if it doesn't exist
     if (!(Get-User -u $config.InstructorEmail)) {
         New-User -u $config.InstructorEmail
         Send-Update -t 1 -c "Generated your instructor email: $($config.InstructorEmail)"  
     }
-    # $eventName = $newEvent -replace '\W', ''
-    # $eventName = "event-" + $eventName.tolower()
-    # $newEmail = $eventName + "@harnessevents.io"
-    # Send-Update -t 0 -c "Generated email: $newEmail from value $newEvent"
-    # Check if name is in use
+    # Create group if needed
     $uri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email='$($config.EventEmail)'"
     Send-Update -t 0 -c "Checking group email with uri: $uri"
     $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
     if (!$response.groups) {
-        # Group doesn't exist
-        New-Group -e $newEmail -n $eventName
+        New-Group -e $config.EventEmail -n $config.EventName
         Add-UserToGroup -u $config.InstructorEmail -o | out-null
         Send-Update -t 1 -c "Waiting for $($config.InstructorEmail) to be registered as group owner"
         while (-not $groupReady) {
@@ -462,26 +718,53 @@ function New-Event {
             }
         }
         Send-Update -t 1 -c "Successfully added user: $($config.InstructorEmail) as owner."
-        $nameselected = $newEmail
     }
     else {
-        Send-Update -t 2 -c "Event email already used: $newEmail"
-        if ($config.EventName -eq "deploytest") {
-            # Need to get this even if about to fail so removal works
-            $eventId = Get-GroupKey -g $newEmail
-            Set-Prefs -k "GoogleEventId" -v $eventId
-            Set-Prefs -k "GoogleEventEmail" -v $newEmail
-            Send-Update -t 2 -c "Previous automated test did not successfully delete event email: $newEmail"
-            Exit 1
+        # Event already exists- if someone else is trying to overwrite this owner's event, bail out
+        $members = Get-GroupMembers -groupEmail $config.EventEmail -splitIntoGroups
+        if ($members.owners.notContains($config.InstructorEmail)) {
+            Send-Update -t 2 -c "This event is owned by: $($members.owners)"
         }
-        if ($config.EventName) {
-            $nameselected = $newEmail
-        }
+        exit
     }
+    # else {
+    #     if ($config.EventName -eq "deploytest") {
+    #         # Need to get this even if about to fail so removal works
+    #         $eventId = Get-GroupKey -g $newEmail
+    #         Set-Prefs -k "GoogleEventId" -v $eventId
+    #         Set-Prefs -k "GoogleEventEmail" -v $newEmail
+    #         Send-Update -t 2 -c "Previous automated test did not successfully delete event email: $newEmail"
+    #         Exit 1
+    #     }
+    #     if ($config.EventName) {
+    #         $nameselected = $newEmail
+    #     }
     # }
-    $eventId = Get-GroupKey -g $nameselected
+    # # }
+    $eventId = Get-GroupKey -g $($config.EventName)
     Set-Prefs -k "GoogleEventId" -v $eventId
     Get-Events
+}
+function New-User {
+    # Create a new google workspace user
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string] $userEmail
+    )
+    $uri = 'https://admin.googleapis.com/admin/directory/v1/users'
+    $body = @{
+        "primaryEmail"              = $userEmail
+        "name"                      = @{
+            "givenName"  = "Harness"
+            "familyName" = "Events"
+        }
+        "suspended"                 = $false
+        "password"                  = "Harness!"
+        "changePasswordAtNextLogin" = $false
+    } | ConvertTo-Json
+    $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
+    return $response
 }
 
 ## Main
