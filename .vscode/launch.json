@@ -16,7 +16,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-v", "-headless", "-userCount 2", "-eventName eventbuilder", "-gcp"]
+      "args": ["create", "-c", "-v", "-eventName event-whisperingsidewalk", "-gcp"]
     },
     {
       "name": "PowerShell: Create Random new event",
@@ -30,7 +30,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-janitorMode", "-c", "-v"]
+      "args": ["remove", "-c", "-v"]
     }
   ]
 }
