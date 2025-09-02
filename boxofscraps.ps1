@@ -533,7 +533,12 @@ function Get-JanitorMode {
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
     foreach ($eventJson in $openEvents) {
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
-        $TimeDiff = $(Get-Date) - $e.EventCreateTime
+        if (-not $e.EventCreateTime) {
+            $TimeDiff = 1000000
+        }
+        else {
+            $TimeDiff = $(Get-Date) - $e.EventCreateTime
+        }
         # if event is expired, mark it for removal
         if ($TimeDiff.TotalHours -gt $maxEventHours -or $e.GoogleUser -eq $emailTarget) {
             if ($emailTarget) {
