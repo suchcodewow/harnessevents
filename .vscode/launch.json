@@ -16,14 +16,14 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-v", "-headless", "-userCount 2", "-eventName itchycow", "-gcp"]
+      "args": ["-c", "-v", "-headless", "-userCount 2", "-eventName eventbuilder", "-gcp"]
     },
     {
       "name": "PowerShell: Create Random new event",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-v", "-headless", "-userCount 1"]
+      "args": ["create", "-c", "-v"]
     },
     {
       "name": "PowerShell: Remove My Events",

@@ -1,22 +1,12 @@
 template:
   name: Lab A Complete
-  identifier: Lab_A_Complete
-  versionLabel: "1"
   type: Pipeline
-  orgIdentifier: event_builder
-  tags:
-    cheatcode: ""
+  orgIdentifier: none
   spec:
-    properties:
-      ci:
-        codebase:
-          connectorRef: org.GitHub_Connector
-          repoName: globalcorp-mainapi
-          build: <+input>
     stages:
       - stage:
-          name: Build Python Application
-          identifier: Build_Python_Application
+          name: CI
+          identifier: CI
           description: ""
           type: CI
           spec:
@@ -35,9 +25,23 @@ template:
             execution:
               steps:
                 - step:
-                    type: Run
-                    name: Do Steps here
-                    identifier: Do_Steps_here
+                    type: BuildAndPushGAR
+                    name: Build and Push Artifact
+                    identifier: BuildAndPushGAR_1
                     spec:
-                      shell: Sh
-                      command: echo "hi mom"
+                      connectorRef: org.GCP_Platform_Connector
+                      host: <+variable.org.google_region>-docker.pkg.dev
+                      projectID: <+variable.org.google_project_id>
+                      imageName: <+variable.org.google_resource_id>/<+pipeline.properties.ci.codebase.repoName>
+                      tags:
+                        - <+project.name>
+    properties:
+      ci:
+        codebase:
+          connectorRef: org.GitHub_Connector
+          repoName: globalcorp-mainapi
+          build: <+input>
+  identifier: Lab_A_Complete
+  tags:
+    cheatcode: ""
+  versionLabel: "1"
