@@ -6,6 +6,7 @@ param (
     [Parameter()][switch]$aws,                          # [CREATE MODE] create aws classroom for event TODO
     [Parameter()][switch] $azure,                       # [CREATE MODE] create azure classroom for event TODO
     [Parameter()][switch] $cloudCommands,               # enable to show commands
+    [Parameter()][string] $HarnessEventsPAT,            # [CREATE MODE] harness PAT (default is community HarnessEvents account)
     [Parameter()][switch] $gcp,                         # [CREATE MODE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # override project creation to use a specific project
     [Parameter()][int] $hourLimit,                      # [REMOVE MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
@@ -59,8 +60,29 @@ function Get-Prefs($scriptPath) {
         $script:providerColumns = @("option", "provider", "name")
         $script:eventColumns = @("option","Name", "Email")
     }
+    if (Test-Path $configFile) {
+        Send-Update -c "Reading config" -t 0
+        $script:previousConfig = Get-Content $configFile -Raw | ConvertFrom-Json
+    }
     $script:config = [PSCustomObject]@{}
     $config | ConvertTo-Json | Out-File $configFile
+    $carryoverVariables = @(
+        "GoogleAccessToken",
+        "GoogleAccessTokenTimestamp",
+        "GoogleAppToken",
+        "GoogleAppTokenTimestamp",
+        "AdminProjectId",
+        "HarnessFFToken",
+        "HarnessEventsPAT",
+        "GoogleAccessToken",
+        "GoogleServiceAccount",
+        "ServiceAccountEmail",
+        "ServiceAccountKey")
+    foreach ($c in $carryoverVariables) {
+        if ($previousConfig.$c) { Set-Prefs -k $c -v $previousConfig.$c } else { $script:refreshToken = $true }
+    }
+    # if we're missing any variables trigger a full refresh
+    if ($refreshToken) { Set-Prefs -k "GoogleAccessToken" }
     Send-Update -c "CREATED config" -t 0
 
 }
@@ -380,7 +402,7 @@ function Save-Event {
 
 ## Actions
 function Get-HeadlessMode {
-    Send-Update -t 1 -c "Creating new event"
+    Send-Update -t 1 -c "Setting up config for new event."
     # Error out with any problems
     $ErrorActionPreference = "Stop"
     # Use cli provided instructor name if present
@@ -402,9 +424,7 @@ function Get-HeadlessMode {
         Send-Update -t 2 -c "Switch to your work account with <gcloud config set account 'your email'>"
         exit
     }
-    # Save Harness org name
-    Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
-
+    Send-Update -t 0 -c "Successfully identified current user: $currentUser"
     # Start saving configuration
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
@@ -419,6 +439,8 @@ function Get-HeadlessMode {
     $formattedEventName = $eventName -replace '\W', ''
     $formattedEventName = "event-" + $formattedEventName.tolower()
     Set-Prefs -k "GoogleEventName" -v $formattedEventName
+    # Save Harness org name
+    Set-Prefs -k "HarnessOrg" -v "$($config.GoogleEventName.tolower().replace("-","_"))"
     $eventEmail = $formattedEventName + "@harnessevents.io"
     Set-Prefs -k "GoogleEventEmail" -v $eventEmail
     if ($gcp) { Set-Prefs -k "GoogleClassroom" -v $config.HarnessOrg.replace("_","-") }
@@ -430,7 +452,8 @@ function Get-HeadlessMode {
     Save-Event
     # Create the event
     New-Event
-    #Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
+    # Check connectivity
+    Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
     #Sync-Event
     if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
@@ -572,6 +595,7 @@ function Add-UserToGroup {
     return $response
 }
 function Get-GoogleAccessToken {
+    Send-Update -t 1 -c "Checking on token"
     # Check for valid token
     if ($config.GoogleAccessToken -and $config.GoogleAccessTokenTimestamp) {
         # Check if token is over 30m old
@@ -642,6 +666,8 @@ function Get-GoogleAccessToken {
     Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
     # Cleanup due to Google's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
+    # Get API token to access Google Drive and Google Sheets
+    Get-GoogleApiAccessToken
 }
 function Get-GoogleApiAccessToken {
     if ($config.GoogleAppToken -and $config.GoogleAppTokenTimestamp) {
@@ -832,6 +858,7 @@ function New-Group {
     } until ($success)
 }
 function New-Event {
+    Send-Update -t 1 -c "Creating new event"
     # Create instructor email for this user if it doesn't exist
     if (!(Get-User -u $config.InstructorEmail)) {
         New-User -u $config.InstructorEmail
@@ -863,14 +890,13 @@ function New-Event {
         # Event already exists- if someone else is trying to overwrite this owner's event, bail out
         Send-Update -t 1 -c "$($config.GoogleEventEmail) already exists.  Confirming ownership."
         $members = Get-GroupMembers -groupEmail $config.GoogleEventEmail -splitIntoGroups
-        write-host $members
-        if ($members -and $members.owners.notContains($config.InstructorEmail)) {
+        if (($members.owners.email | Where-Object { $_ -eq $config.GoogleEventEmail }).count -eq 1) {
             Send-Update -t 2 -c "This event is owned by: $($members.owners)- wait for the event to expire or contact the owner."
             exit
         }
-        Send-Update -t 1 -c "Confirmed you are the owner of this event."
+        Send-Update -t 1 -c "Confirmed you are an event owner."
     }
-    $eventId = Get-GroupKey -g $($config.GoogleEventName)
+    $eventId = Get-GroupKey -g $($config.GoogleEventEmail)
     Set-Prefs -k "GoogleEventId" -v $eventId
 }
 function New-User {
@@ -1036,7 +1062,41 @@ function Remove-HarnessEventDetails {
         }
     }
 }
+function Test-Connectivity {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $harnessToken
+    )
+    $harnessAccount = $harnessToken.split(".")[1]
+    $TestHarnessHeaders = @{
+        "x-api-key" = $harnessToken
+    }
+    Send-Update -t 1 -c "Checking provided Harness PAT"
+    $uri = "https://app.harness.io/ng/api/accounts/$harnessAccount"
+    try {
+        $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $TestHarnessHeaders
+    }
+    catch {
+        Send-Update -t 2 -c "Failed to connect to Harness API: $($_.Exception.Message)"
+        return $false
+    }
+    Send-Update -t 0 -c "Token validation successful!"
 
+    Set-Prefs -k "HarnessAccount" -v $response.data.companyName
+    Set-Prefs -k "HarnessAccountId" -v $harnessAccount
+    Set-Prefs -k "HarnessPAT" -v $harnessToken
+    #$choices | where-object { $_.key -eq "HARNESSCFG" } | ForEach-Object { $_.current = $config.HarnessAccount }
+    # OMG Why do 2 API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
+    $fixGodDamnEnv = $response.data.cluster.replace("-","")
+    $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
+    if ($correctEnv -ne "Prod1") {
+        Send-Update -t 2 "$correctEnv isn't the expected environment of Prod1 - just FYI if something doesn't work right."
+    }
+    Set-Prefs -k "HarnessEnv" -v $correctEnv
+    return $response
+}
 ## Classroom functions
 function Get-GCPProjectList {
     # Retrieve administration organization
