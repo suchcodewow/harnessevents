@@ -413,12 +413,14 @@ function Get-HeadlessMode {
     # Error out with any problems
     $ErrorActionPreference = "Stop"
     # Use cli provided instructor name if present
+    $cliUser = gcloud auth list --format='value(account)' --filter=status=active
+    Set-Prefs -k "CLIUser" -v $cliUser
     if ($instructorName) {
         $currentUser = $instructorName
     }
     else { 
         # this will use the cloudsdk account- typically used for daily testing
-        $currentUser = gcloud auth list --format='value(account)' --filter=status=active
+        $currentUser = $cliUser
     }
     if (-not $currentUser) {
         Send-Update -t 2 -c "No google user authentication found.  Is it illegal in 23 US states to continue without one.  Nice try though."
@@ -629,10 +631,10 @@ function Get-GoogleAccessToken {
     }
     # Refresh token if older than 30m
     Send-Update -t 1 -c "Refreshing token"
-    if ($config.GoogleUser -and $config.GoogleUser.contains("@harness.io")) {
+    if ($config.CLIUser.contains("@harness.io")) {
         $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
     }
-    if ($config.GoogleUser.contains("cloudsdk")) {
+    if ($config.CLIUser.contains("cloudsdk")) {
         $initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
     }
     if ($initProject.count -ne 1) {
