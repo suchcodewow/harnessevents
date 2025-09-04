@@ -6,7 +6,7 @@ param (
     [Parameter()][switch]$aws,                          # [CREATE MODE] create aws classroom for event TODO
     [Parameter()][switch] $azure,                       # [CREATE MODE] create azure classroom for event TODO
     [Parameter()][switch] $cloudCommands,               # enable to show commands
-    [Parameter()][string] $HarnessEventsPAT,            # [CREATE MODE] harness PAT (default is community HarnessEvents account)
+    [Parameter()][string] $HarnessCustomPAT,            # [CREATE MODE] harness PAT (default is community HarnessEvents account)
     [Parameter()][switch] $gcp,                         # [CREATE MODE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # override project creation to use a specific project
     [Parameter()][int] $hourLimit,                      # [REMOVE MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
@@ -333,6 +333,7 @@ function Send-Update {
             0 { $Params['ForegroundColor'] = "DarkBlue"; $start = "[.]" }
             1 { $Params['ForegroundColor'] = "DarkGreen"; $start = "[-]" }
             2 { $Params['ForegroundColor'] = "DarkRed"; $start = "[X]" }
+            3 { $Params['ForegroundColor'] = "DarkRed"; $start = "[XX] Existing with error: " }
             default { $Params['ForegroundColor'] = "Gray"; $start = "" }
         }
     }
@@ -372,6 +373,12 @@ function Send-Update {
             $run = $run + " --no-user-output-enabled"
         }
         return invoke-expression $run 1>$null 
+    }
+    # If this is a terminal error, write environment variable for Harness to use and exit
+    if ($type -eq 3) {
+        $env:terminalError = $content
+        Send-Update -t 2 -c "Error written to environment variables: terminalError."
+        exit
     }
     if ($run) { return invoke-expression $run }
 }
@@ -453,7 +460,15 @@ function Get-HeadlessMode {
     # Create the event
     New-Event
     # Check connectivity
-    Test-Connectivity -harnessToken $config.HarnessEventsPAT | Out-Null
+    if ($HarnessCustomPAT) {
+        Send-Update -t 1 -c "Using provided Harness PAT"
+        $harnessToken = $HarnessCustomPat 
+    }
+    else {
+        Send-Update -t 1 -c "Using community Harness Account"
+        $harnessToken = $config.HarnessEventsPAT 
+    }
+    Test-Connectivity -harnessToken $harnessToken
     #Sync-Event
     if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
@@ -1069,11 +1084,16 @@ function Test-Connectivity {
         [string]
         $harnessToken
     )
-    $harnessAccount = $harnessToken.split(".")[1]
+    Send-Update -t 1 -c "Starting Harness connectivity check"
+    $harnessSplit = $harnessToken.split(".")
+    if ($harnessSplit.count -ne 4) {
+        Send-Update -t 3 -c "Harness Platform token was malformed."
+    }
+    $harnessAccount = $harnessSplit[1]
     $TestHarnessHeaders = @{
         "x-api-key" = $harnessToken
     }
-    Send-Update -t 1 -c "Checking provided Harness PAT"
+    Send-Update -t 1 -c "Harness token..." -append
     $uri = "https://app.harness.io/ng/api/accounts/$harnessAccount"
     try {
         $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $TestHarnessHeaders
@@ -1082,13 +1102,11 @@ function Test-Connectivity {
         Send-Update -t 2 -c "Failed to connect to Harness API: $($_.Exception.Message)"
         return $false
     }
-    Send-Update -t 0 -c "Token validation successful!"
-
+    Send-Update -t 1 -c "is valid."
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
     Set-Prefs -k "HarnessAccountId" -v $harnessAccount
     Set-Prefs -k "HarnessPAT" -v $harnessToken
-    #$choices | where-object { $_.key -eq "HARNESSCFG" } | ForEach-Object { $_.current = $config.HarnessAccount }
-    # OMG Why do 2 API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
+    # OMG Why do 2 Harness API's use DIFFERENT strings to describe the SAME ENVIRONMENT *internal sobbing*
     $fixGodDamnEnv = $response.data.cluster.replace("-","")
     $correctEnv = $fixGodDamnEnv.substring(0,1).toUpper() + $fixGodDamnEnv.substring(1)
     if ($correctEnv -ne "Prod1") {
@@ -1097,6 +1115,7 @@ function Test-Connectivity {
     Set-Prefs -k "HarnessEnv" -v $correctEnv
     return $response
 }
+
 ## Classroom functions
 function Get-GCPProjectList {
     # Retrieve administration organization
