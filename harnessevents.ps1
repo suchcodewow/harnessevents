@@ -470,7 +470,7 @@ function Get-HeadlessMode {
         Send-Update -t 1 -c "Using community Harness Account"
         $harnessToken = $config.HarnessEventsPAT 
     }
-    Test-Connectivity -harnessToken $harnessToken
+    Test-Connectivity -harnessToken $harnessToken | Out-Null
     #Sync-Event
     if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
