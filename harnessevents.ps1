@@ -403,7 +403,7 @@ function Test-PreFlight {
 function Save-Event {
     Set-Prefs -k "EventCreateTime" -v $(Get-Date)
     $datePrefix = $(Get-Date -Uformat "%Y-%m")
-    $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.EventName + ".json"
+    $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.GoogleEventName + ".json"
     gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName
 }
 
@@ -502,16 +502,6 @@ function Get-JanitorMode {
     }
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
-    # if ($hourLimit) {
-    #     $maxEventHours = $hourLimit
-    #     $emailTarget = "notapplicable"
-    #     Send-Update -t 1 -c "Running in timed removal mode"
-    # }
-    # else {
-    #     $maxEventHours = 1000000
-    #     $emailTarget = $config.InstructorEmail
-    #     Send-Update -t 1 -c "Running in user removal mode"
-    # }
     Send-Update -t 1 -c "Running event cleanup"
     $validEvents = @()
     $expiredOrgs = @()
@@ -529,15 +519,22 @@ function Get-JanitorMode {
         }
         $TimeDiff = $(Get-Date) - $e.EventCreateTime
         if ($hourLimit) {
-            if ($TimeDiff.TotalHours -gt $maxEventHours) {
+            $eventAge
+            if ($TimeDiff.TotalHours -gt $hourLimit) {
                 $removeEvent = $true
-                Send-Update -t 1 -c "Event $($e.GoogleEventName) is $($TimeDiff.Totalhours)h old exceeding limit of $($maxEventHours)h." 
+                Send-Update -t 1 -c "Event $($e.GoogleEventName) has EXPIRED at $([Math]::Round($TimeDiff.Totalhours,2)) hours old <Max age is: $hourLimit>" 
+            }
+            else {
+                Send-Update -t 1 -c "Event $($e.GoogleEventName) is valid at $([Math]::Round($TimeDiff.Totalhours,2)) hours old <Max age is: $hourLimit>"
             }
         }
         else {
             if ($e.InstructorEmail -eq $config.InstructorEmail) {
                 $removeEvent = $true
                 Send-Update -t 1 -c "Event $($e.GoogleEventName) is one of your events marked to remove."
+            }
+            else {
+                Send-Update -t 1 -c "Skipping even $($e.GoogleEventName)- it's owned by $($e.InstructorEmail)."
             }
         }
         if ($removeEvent) {
@@ -554,7 +551,7 @@ function Get-JanitorMode {
             else {
                 Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat) env: $($e.HarnessEnv)"
             }
-            gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
+            #gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
         }
         else {
             # Event is still active- record it so we can wipe out any orphans later.
@@ -563,9 +560,9 @@ function Get-JanitorMode {
             if ($e.GoogleProjectId) { $validGCPProjects += $e.GoogleProjectId }
             if ($e.AWSProjectId) { $validAWSProjects += $e.AWSProjectId }
             if ($e.AzureProjectId) { $validAzureProjects += $e.AzureProjectId }
-            Send-Update -t 1 -c "$($e.GoogleEventEmail) is still valid with $([Math]::ROUND($maxEventHours - $TimeDiff.TotalHours,1))h remaining."
         }
     }
+    exit
     Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
     Remove-HarnessEventDetails -accounts $expiredOrgs
     # Remove unattached google events
@@ -590,7 +587,7 @@ function Get-JanitorMode {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     }
     if ($hourLimit) {
-        Remove-HarnessEventsUsers
+        Remove-HarnessUsers
     }
     Send-Update -t 1 -c "End event cleanup" 
     exit
@@ -1040,6 +1037,18 @@ function Remove-Event {
         $groupExists = Invoke-RestMethod -Method 'GET' -Uri $GroupCheckUri -Headers $headers
         Start-Sleep -s 3
     } until (-not $groupExists.groups)
+}
+function Remove-User {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $userEmail
+    )
+    $uri = "https://admin.googleapis.com/admin/directory/v1/users/$userEmail"
+    $response = Invoke-RestMethod -Method 'Delete' -Uri $uri -Headers $headers
+    return $response
+
 }
 function Save-EventDetails {
     Get-GoogleApiAccessToken
@@ -1576,6 +1585,31 @@ function Add-HarnessEventDetails {
             $cleanProject = ($attendee.email.split("@")[0] -replace '\W', '').tolower()
             Add-Project -projectName $cleanProject
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
+        }
+    }
+}
+function Remove-HarnessUsers {
+    # Remove any orphaned users from HarnessEvents keeping it tidy
+    $googleUsers = Get-Allusers
+    $HarnessHeaders = @{
+        'x-api-key'    = $config.HarnessEventsPAT
+        'Content-Type' = 'application/json'
+    }
+    $body = @{
+        "searchTerm" = "harnessevents.io"
+    } | ConvertTo-Json
+    $accountID = $config.HarnessEventsPAT.split(".")[1]
+    $userdetailsuri = "https://app.harness.io/ng/api/user/batch?accountIdentifier=$accountID"
+    $response = invoke-restmethod -uri $userdetailsuri -headers $HarnessHeaders -ContentType "application/json" -Method 'POST' -body $body
+    $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
+    foreach ($user in $harnessUsers) {
+        if ($googleUsers.primaryEmail -notcontains $user.email) {
+            Send-Update -t 1 -c "Removing extraneous user: $($user.email)"
+            $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$accountID"
+            invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
+        }
+        else {
+            Send-Update -t 1 -c "$($user.email) is valid."
         }
     }
 }

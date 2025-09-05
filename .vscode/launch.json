@@ -16,7 +16,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v", "-eventName builder", "-gcp"]
+      "args": ["create", "-c", "-v", "-eventName builder"]
     },
     {
       "name": "PowerShell: Create Random new event",
@@ -31,6 +31,13 @@
       "request": "launch",
       "script": "${file}",
       "args": ["remove", "-c", "-v"]
+    },
+    {
+      "name": "PowerShell: Danger! Delete all workshops",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["remove", "-c", "-v", "-hourLimit 48"]
     }
   ]
 }
