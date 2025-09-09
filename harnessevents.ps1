@@ -562,7 +562,6 @@ function Get-JanitorMode {
             if ($e.AzureProjectId) { $validAzureProjects += $e.AzureProjectId }
         }
     }
-    exit
     Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
     Remove-HarnessEventDetails -accounts $expiredOrgs
     # Remove unattached google events
