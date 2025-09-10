@@ -16,7 +16,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v", "-eventName builder"]
+      "args": ["create", "-c", "-v", "-eventName builder", "-gcp"]
     },
     {
       "name": "PowerShell: Create Random new event",
