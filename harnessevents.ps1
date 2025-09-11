@@ -1543,6 +1543,7 @@ function Add-HarnessEventDetails {
     $featureFlagsStart = Get-Content -path ./harnesseventsdata/config/featureflagsstart.json | Convertfrom-Json
     $currentFlags = Get-FeatureFlagStatus
     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+    Send-Update -t 1 -c "$($flagsNeeded.count) flag(s) to update"
     foreach ($flag in $flagsNeeded) {
         Update-FeatureFlag -flag $flag.Name -value $flag.Value
     }
@@ -2322,6 +2323,38 @@ function Test-Connectivity {
     }
     Set-Prefs -k "HarnessEnv" -v $correctEnv
     return $response
+}
+function Update-FeatureFlag {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]
+        $flag,
+        [Parameter(Mandatory = $true)]
+        [string]
+        $value
+    )
+    $body = @{
+        "instructions" = @(
+            @{
+                "kind"       = "addTargetToFlagsVariationTargetMap"
+                "parameters" = @{
+                    "features" = @(
+                        @{
+                            "identifier" = $flag
+                            "variation"  = $value
+                        }
+                    )
+                }
+            }
+        )
+    } | ConvertTo-Json -Depth 10
+    Send-Update -t 1 -c "Updating feature flag $flag with value '$value'"
+    $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=$($config.HarnessEnv)"
+    Send-Update -t 0 -c "Updating feature flag with uri: $uri"
+    Send-Update -t 0 -c "And body of $body"
+    Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body | Out-Null
+    Send-Update -t 1 -c "feature flag $flag variation set: $value"
 }
 
 ## Classroom functions
