@@ -290,21 +290,22 @@ function Set-Prefs {
     # Values are stored in <script>.conf
     param(
         $k, # key
-        $v # value
+        $v, # value
+        [switch]$output # Output the value to debug stream
     )
     if ($v) {
-        Send-Update -c "Updating key: $k -> $v" -t 0
+        if ($o) { Send-Update -c "Updating key: $k -> $v" -t 0 }
         #$config[$k] = $v
         $config | Add-Member -MemberType NoteProperty -Name $k -Value $v -Force
     }
     else {
         if ($k -and $config.$k) {
-            Send-Update -c "Deleting config key: $k" -t 0
+            if ($o) { Send-Update -c "Deleting config key: $k" -t 0 }
             #$config.remove($k)
             $config.PSObject.Properties.Remove($k)
         }
         else {
-            Send-Update -c "Key didn't exist: $k" -t 0
+            if ($o) { Send-Update -c "Key didn't exist: $k" -t 0 }
         }
     }     
     if ($MyInvocation.MyCommand.Name) {
@@ -472,15 +473,13 @@ function Get-HeadlessMode {
     }
     Test-Connectivity -harnessToken $harnessToken | Out-Null
     Sync-Event
-    if ($config.GoogleUser.contains("@harness.io")) {
-        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
-    }
+    Disable-ServiceAccount
     Send-Update -t 1 -c "End Headless Mode"
     exit
 }
 function Get-JanitorMode {
     $cliUser = gcloud auth list --format='value(account)' --filter=status=active
-    Set-Prefs -k "CLIUser" -v $cliUser
+    Set-Prefs -k "CLIUser" -v $cliUser -o
     # Use cli provided instructor name if present
     if ($instructorName) {
         $currentUser = $instructorName
@@ -500,6 +499,7 @@ function Get-JanitorMode {
         Send-Update -t 2 -c "Switch to your work account with <gcloud config set account 'your email'>"
         exit
     }
+    Enable-ServiceAccount
     Set-Prefs -k "GoogleUser" -v $currentUser
     Set-Prefs -k "InstructorEmail" -v "$($currentUser.split("@")[0])@harnessevents.io"
     Send-Update -t 1 -c "Running event cleanup"
@@ -557,9 +557,9 @@ function Get-JanitorMode {
             # Event is still active- record it so we can wipe out any orphans later.
             # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
             $validEvents += $e.GoogleEventEmail
-            if ($e.GoogleProjectId) { $validGCPProjects += $e.GoogleProjectId }
-            if ($e.AWSProjectId) { $validAWSProjects += $e.AWSProjectId }
-            if ($e.AzureProjectId) { $validAzureProjects += $e.AzureProjectId }
+            if ($e.GoogleClassroom) { $validGCPProjects += $e.GoogleClassroom }
+            if ($e.AwsClassroom) { $validAWSProjects += $e.AwsClassroom }
+            if ($e.AzureClassroom) { $validAzureProjects += $e.AzureClassroom }
         }
     }
     Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
@@ -577,7 +577,7 @@ function Get-JanitorMode {
     $gcpProjects = Get-GCPProjectList
     Send-Update -t 1 -c "$($validGCPProjects.count) valid / $($gcpProjects.count) total google project(s)."
     foreach ($project in $gcpProjects) {
-        if ($validGCPProjects -notcontains $project.projectId) {
+        if ($validGCPProjects -notcontains $project.name) {
             Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
             Remove-GCPProject -id $project.projectId
         }
@@ -588,11 +588,15 @@ function Get-JanitorMode {
     if ($hourLimit) {
         Remove-HarnessUsers
     }
+    if ($config.GoogleUser.contains("@harness.io")) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
     Send-Update -t 1 -c "End event cleanup" 
     exit
 }
 
 ## Event Functions
+
 function Add-EventUsers {
     if (-not $config.UserEventCount) {
         Send-Update -t 1 -c "User count not entered- skipping adding users."
@@ -659,6 +663,43 @@ function Add-UserToGroup {
     $response = Invoke-RestMethod -Method 'Post' -ContentType 'application/json' -Uri $uri -Body $body -Headers $headers
     return $response
 }
+function Disable-ServiceAccount {
+    if ($config.GoogleUser.contains("@harness.io")) {
+        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
+    }
+}
+function Enable-ServiceAccount {
+    if ($config.CLIUser.contains("cloudsdk")) {
+        #$initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
+        # Already running as service account - all set
+        return
+    }
+    if ($config.CLIUser.contains("@harness.io")) {
+        $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
+    }
+
+    if ($initProject.count -ne 1) {
+        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
+        exit
+    }
+    Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($initProject.projectId)" | Out-File -FilePath harnessevents.json
+    if (!(Test-Path("harnessevents.json"))) {
+        Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
+        exit
+    }
+    Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
+
+}
+function Get-Allusers {
+    Get-GoogleAccessToken
+    $uri = "https://admin.googleapis.com/admin/directory/v1/users?domain=harnessevents.io"
+    Send-Update -t 1 -c "Retrieving all users"
+    $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
+    if ($response.users) {
+        return $response.users
+    }
+    return $false
+}
 function Get-GoogleAccessToken {
     Send-Update -t 1 -c "Checking on token"
     # Check for valid token
@@ -679,22 +720,7 @@ function Get-GoogleAccessToken {
     }
     # Refresh token if older than 30m
     Send-Update -t 1 -c "Refreshing token"
-    if ($config.CLIUser.contains("@harness.io")) {
-        $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
-    }
-    if ($config.CLIUser.contains("cloudsdk")) {
-        $initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
-    }
-    if ($initProject.count -ne 1) {
-        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
-        exit
-    }
-    Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($initProject.projectId)" | Out-File -FilePath harnessevents.json
-    if (!(Test-Path("harnessevents.json"))) {
-        Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
-        exit
-    }
-    Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
+    Enable-ServiceAccount
     $project = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
     Set-Prefs -k "AdminProjectId" -v $($project.projectId)
     # Sneak in grabbing the Harness Feature Flag token and HarnessEvents PATeven though this is a google function. shhhhh!
@@ -1545,7 +1571,12 @@ function Add-HarnessEventDetails {
     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
     Send-Update -t 1 -c "$($flagsNeeded.count) flag(s) to update"
     foreach ($flag in $flagsNeeded) {
-        Update-FeatureFlag -flag $flag.Name -value $flag.Value
+        $ffSuccess = Update-FeatureFlag -flag $flag.Name -value $flag.Value
+        if (-not $ffSuccess) {
+            # this flag failed- likely because it no longer exists. Removing it from the desired feature flags list.
+            Send-Update -t 0 -c "Removing failed feature flag $($flag.name) from the list to update"
+            $featureFlagsStart.PSObject.Properties.Remove($flag.Name)
+        }
     }
     do {
         $currentFlags = Get-FeatureFlagStatus
@@ -2353,18 +2384,30 @@ function Update-FeatureFlag {
     $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=$($config.HarnessEnv)"
     Send-Update -t 0 -c "Updating feature flag with uri: $uri"
     Send-Update -t 0 -c "And body of $body"
-    Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body | Out-Null
+    Try {
+        Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body | Out-Null
+    }
+    catch {
+        $errorResponse = $_ | Convertfrom-Json
+        if ($errorResponse.message.contains("Failed to find feature activation")) {
+            Send-Update -t 2 -c "Continuing- but $flag is not found.  Confirm the flag was deleted and then ensure it's removed from both /harnesseventsdata/config/featureflags*.json files."
+            return $false
+        }
+        Send-Update -t 3 -c "There was a critical failure with this feature flag. The API error was $errorResponse."
+    }
     Send-Update -t 1 -c "feature flag $flag variation set: $value"
+    return $true
 }
 
 ## Classroom functions
 function Get-GCPProjectList {
     # Retrieve administration organization
-    $adminOrg = invoke-expression -Command "gcloud organizations list --filter='display_name:harnessevents.io' --format=json" | Convertfrom-Json
-    $adminOrgId = $adminOrg.name.split("/")[1]
-    Set-Prefs -k "AdminOrgId" -v $adminOrgId
+
+    #Set-Prefs -k "AdminOrgId" -v $adminOrgId
     # Retrieve all child projects except administration
-    $projects = Send-Update -t 1 -c "Retrieving projects" -r "gcloud projects list --filter='parent.id:$($config.AdminOrgId) AND -name:administration' --format=json" | Convertfrom-Json
+    $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
+    $billingaccount = $AdminProjectInfo.name.split("/")[1]
+    $projects = Send-Update -t 1 -c "Retrieving projects" -r "gcloud billing projects list --billing-account=$billingaccount --filter='-name:administration' --format=json" | Convertfrom-Json
     return $projects
 }
 function New-GCPProject {
