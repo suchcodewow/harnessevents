@@ -2420,7 +2420,6 @@ function Get-GCPProjectList {
         $projectDetails = Send-Update -t 1 -c "Getting details of project: $($project.projectId)" -r "gcloud projects describe $($project.projectId) --format=json" | Convertfrom-Json
         $project | Add-Member -MemberType NoteProperty -Name "eventName" -Value $projectDetails.name
         $project | Add-Member -MemberType NoteProperty -Name "projectNumber" -Value $projectDetails.projectNumber
-        #$project.projectNumber = $projectDetails.projectNumber
     }
     return $projects
 }
