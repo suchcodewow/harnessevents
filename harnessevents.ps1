@@ -405,7 +405,7 @@ function Save-Event {
     Set-Prefs -k "EventCreateTime" -v $(Get-Date)
     $datePrefix = $(Get-Date -Uformat "%Y-%m")
     $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.GoogleEventName + ".json"
-    gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName
+    gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName --no-user-output-enabled
 }
 
 ## Actions
