@@ -551,7 +551,7 @@ function Get-JanitorMode {
             else {
                 Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat) env: $($e.HarnessEnv)"
             }
-            gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
+            #gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
         }
         else {
             # Event is still active- record it so we can wipe out any orphans later.
@@ -564,7 +564,7 @@ function Get-JanitorMode {
     }
     Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
     Remove-HarnessEventDetails -accounts $expiredOrgs
-    # Remove unattached google events
+    # Remove unattached  events
     $eventGroups = Get-UserGroups -allEvents
     Send-Update -t 1 -c "$($validEvents.count) valid / $($eventGroups.count) total events."
     foreach ($e in $eventGroups) {
@@ -577,7 +577,7 @@ function Get-JanitorMode {
     $gcpProjects = Get-GCPProjectList
     Send-Update -t 1 -c "$($validGCPProjects.count) valid / $($gcpProjects.count) total google project(s)."
     foreach ($project in $gcpProjects) {
-        if ($validGCPProjects -notcontains $project.name) {
+        if ($validGCPProjects -notcontains $project.eventName) {
             Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
             Remove-GCPProject -id $project.projectId
         }
@@ -596,7 +596,6 @@ function Get-JanitorMode {
 }
 
 ## Event Functions
-
 function Add-EventUsers {
     if (-not $config.UserEventCount) {
         Send-Update -t 1 -c "User count not entered- skipping adding users."
@@ -669,23 +668,21 @@ function Disable-ServiceAccount {
     }
 }
 function Enable-ServiceAccount {
-    if ($config.CLIUser.contains("cloudsdk")) {
+    $currentUser = gcloud auth list --format='value(account)' --filter=status=active
+    if ($currentUser.contains("cloudsdk")) {
         #$initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
         # Already running as service account - all set
         return
     }
-    if ($config.CLIUser.contains("@harness.io")) {
+    if ($currentUser.contains("@harness.io")) {
         $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
     }
-
     if ($initProject.count -ne 1) {
-        Send-Update -t 2 -c "Failed to find project. Try running (gcloud auth login) using your work email."
-        exit
+        Send-Update -t 3 -c "Failed to find project. Try running (gcloud auth login) using your work email."
     }
     Send-Update -t 1 -c "Retrieving credentials" -r "gcloud secrets versions access latest --secret='HarnessEventsAccount' --project=$($initProject.projectId)" | Out-File -FilePath harnessevents.json
     if (!(Test-Path("harnessevents.json"))) {
-        Send-Update -t 2 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
-        exit
+        Send-Update -t 3 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
     }
     Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
 
@@ -2269,6 +2266,16 @@ function Get-HarnessUser {
     $userExists = $response.data.content | Where-Object { $_.email.Contains($email) }
     if ($userExists) { return $userExists } else { return $false }
 }
+function Remove-Delegate {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [String]
+        $delegateId
+    )
+    $uri = "https://app.harness.io/ng/api/delegate-setup/delegate/$($delegateId)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
+    Invoke-RestMethod -method 'DEL' -uri $uri -headers $HarnessHeaders -ContentType 'application/json' | Out-null
+}
 function Remove-HarnessEventDetails {
     [CmdletBinding()]
     param (
@@ -2382,8 +2389,6 @@ function Update-FeatureFlag {
     } | ConvertTo-Json -Depth 10
     Send-Update -t 1 -c "Updating feature flag $flag with value '$value'"
     $uri = "https://harness0.harness.io/cf/admin/targets/$($config.HarnessAccountId)?accountIdentifier=l7B_kbSEQD2wjrM7PShm5w&orgIdentifier=PROD&projectIdentifier=FFOperations&environmentIdentifier=$($config.HarnessEnv)"
-    Send-Update -t 0 -c "Updating feature flag with uri: $uri"
-    Send-Update -t 0 -c "And body of $body"
     Try {
         Invoke-RestMethod -Method 'Patch' -ContentType "application/json" -uri $uri -Headers $HarnessFFHeaders -body $body | Out-Null
     }
@@ -2393,6 +2398,8 @@ function Update-FeatureFlag {
             Send-Update -t 2 -c "Continuing- but $flag is not found.  Confirm the flag was deleted and then ensure it's removed from both /harnesseventsdata/config/featureflags*.json files."
             return $false
         }
+        Send-Update -t 0 -c "Feature flag failed with uri: $uri"
+        Send-Update -t 0 -c "And body of $body"
         Send-Update -t 3 -c "There was a critical failure with this feature flag. The API error was $errorResponse."
     }
     Send-Update -t 1 -c "feature flag $flag variation set: $value"
@@ -2408,24 +2415,17 @@ function Get-GCPProjectList {
     $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
     $billingaccount = $AdminProjectInfo.name.split("/")[1]
     $projects = Send-Update -t 1 -c "Retrieving projects" -r "gcloud billing projects list --billing-account=$billingaccount --filter='-name:administration' --format=json" | Convertfrom-Json
+    foreach ($project in $projects) {
+        # get the project name because the billing account view doesn't pull that. fun.
+        $projectDetails = Send-Update -t 1 -c "Getting details of project: $($project.projectId)" -r "gcloud projects describe $($project.projectId) --format=json" | Convertfrom-Json
+        $project | Add-Member -MemberType NoteProperty -Name "eventName" -Value $projectDetails.name
+        $project | Add-Member -MemberType NoteProperty -Name "projectNumber" -Value $projectDetails.projectNumber
+        #$project.projectNumber = $projectDetails.projectNumber
+    }
     return $projects
 }
 function New-GCPProject {
-    if ($googleCloudProjectOverride) {
-        Set-Prefs -k "GoogleProjectId" -v $googleCloudProjectOverride
-        Set-Prefs -k "GoogleProject" -v "Command Line Override"
-        Set-Prefs -k "GoogleRegion" -v "us-central1"
-        $projectCheck = Send-Update -t 1 -c "Check Project Override exists" -r "gcloud projects list --filter='id:$($config.GoogleProjectId)' --format=json" | convertfrom-json
-    }
-    else {
-        # Use Harness Org as the project name- adjusting for the different character requirements *insert massive eyeroll here*
-        Set-Prefs -k "GoogleProject" -v $config.HarnessOrg.replace("_","-")
-        $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | convertfrom-json
-    }
-    if ($googleCloudProjectOverride -and -not $projectCheck) {
-        Send-Update -t 2 -c "Google project override used but $googleCloudProjectOverride doesn't exist. BYIIEEEEE."
-        exit
-    }
+    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleClassroom)' --format=json" | convertfrom-json
     if ($projectCheck) {
         # Project already exists- skip creation
         Send-Update -t 1 -c "Project already exists- skipping creation."
@@ -2438,15 +2438,11 @@ function New-GCPProject {
         # Get billing project of admin project to associate with this project
         $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
         $GoogleBillingProject = $AdminProjectInfo.name.split("/")[1]
-        # Generate a unique project ID following all of Google's goofy rules
-        if ($GoogleProject.length -gt 16) {
-            Set-Prefs -k "GoogleProject" -v $config.GoogleProject.substring(0,16)
-        }
         $projectID = "event-$(Get-Randomstring)"
         $projectID = $projectID.tolower()
-        Send-Update -t 1 -o -c "Create $($config.GoogleProject) project" -r "gcloud projects create $projectID --name=""$($config.GoogleProject)"" --organization=$GoogleOrgId --set-as-default -q"
+        Send-Update -t 1 -o -c "Create $($config.GoogleClassroom) project" -r "gcloud projects create $projectID --name=""$($config.GoogleClassroom)"" --organization=$GoogleOrgId --set-as-default -q"
         while (-not $projectDetails) {
-            $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleProject)' --format=json" | Convertfrom-Json   
+            $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleClassroom)' --format=json" | Convertfrom-Json   
             Start-Sleep -s 6
         }
         # Associate project with billing account
@@ -2454,7 +2450,7 @@ function New-GCPProject {
         Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
         # Add users to project
         Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
-        Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
+        Send-Update -t 1 -o -c "Add user $($config.InstructorEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
         Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
         # Enable API's needed for events
         $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
@@ -2466,17 +2462,29 @@ function New-GCPProject {
         Do {
             $counter++
             if ($counter -ge 10) {
-                Send-Update -t 2 -c "It took too long enabling needed API's"
+                Send-Update -t 3 -c "It took too long enabling needed API's.  I blame Google."
             }
             $enabledAPIs = gcloud services list --format=json | Convertfrom-Json
             $neededAPIs = Compare-Object $projectAPIs $enabledAPIs.config.name | Where-Object { $_.SideIndicator -eq "<=" }
-            Start-Sleep -s 2
+            Start-Sleep -s 4
         } until (-not $neededAPis)
-        # Create worker, get keys, add to IAM
-        Send-Update -t 1 -o -c "Create service account" -r "gcloud iam service-accounts create worker1 --project=$($config.GoogleProjectId)"
+    }
+    # Create worker, get keys, add to IAM
+    $serviceAccountCheck = gcloud iam service-accounts list --filter='email ~ worker1' --format=json --project=$($config.GoogleProjectId) | Convertfrom-Json
+    if (-not $serviceAccountCheck) {
+        Send-Update -t 1 -o -c "Creating service account" -r "gcloud iam service-accounts create worker1 --project=$($config.GoogleProjectId)" -append
+        Do {
+            Send-Update -t 1 -c "." -append
+            $serviceAccount = gcloud iam service-accounts list --filter='email ~ worker1' --format=json --project=$($config.GoogleProjectId) | Convertfrom-Json
+            if (-not $serviceAccount) { Start-Sleep -s 2 }
+        } until ($serviceAccount)
+        Send-Update -t 1 -c "...created"
         Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
         Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         Add-SecretJson -fileName worker1.json -id GCP_Service_Account
+    }
+    else {
+        Send-Update -t 1 -c "Service account already created. Skipping"
     }
     if (Test-Path worker1.json) { Remove-Item worker1.json }
     # Load GCP-specific templates
