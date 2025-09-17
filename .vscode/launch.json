@@ -16,7 +16,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v", "-eventName builder", "-gcp"]
+      "args": ["create", "-c", "-v", "-eventName lightbeggar"]
     },
     {
       "name": "PowerShell: Create Random new event",
@@ -37,7 +37,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["remove", "-c", "-v", "-hourLimit 48"]
+      "args": ["remove", "-c", "-v", "-hourLimit 48", "-whatif"]
     }
   ]
 }

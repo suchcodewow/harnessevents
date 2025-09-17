@@ -1,19 +1,21 @@
 # VSCODE: ctrl/cmd+k+1 folds all functions, ctrl/cmd+k+j unfold all functions. Check '.vscode/launch.json' for any current parameters
 # VSCODE: use setting ["powershell.codeFolding.showLastLine": false] to hide the trailing '}' of each function
-# [CmdletBinding()]
+
 param (
     [Parameter(Position = 0)][string]$action,           # action to execute
-    [Parameter()][switch]$aws,                          # [CREATE MODE] create aws classroom for event TODO
-    [Parameter()][switch] $azure,                       # [CREATE MODE] create azure classroom for event TODO
-    [Parameter()][switch] $cloudCommands,               # enable to show commands
-    [Parameter()][string] $HarnessCustomPAT,            # [CREATE MODE] harness PAT (default is community HarnessEvents account)
-    [Parameter()][switch] $gcp,                         # [CREATE MODE] create gcp classroom for event
-    [Parameter()][string] $googleCloudProjectOverride,  # override project creation to use a specific project
-    [Parameter()][int] $hourLimit,                      # [REMOVE MODE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
-    [Parameter()][string] $eventName,                   # [CREATE MODE] specify event name
-    [Parameter()][string] $instructorName,              # [CREATE MODE] specify instructorName (defaults to current user)
-    [Parameter()][switch] $verboseMode,                 # level 0 (debug/info/errors) output (versus standard level 1 info/errors)
-    [Parameter()][int] $userCount                       # [CREATE MODE] specify number of attendees (default is 3)
+    [Parameter()][switch] $aws,                          # [CREATE] create aws classroom for event TODO
+    [Parameter()][switch] $azure,                       # [CREATE] create azure classroom for event TODO
+    [Parameter()][switch] $cloudCommands,               # debug option: enable to show commands
+    [Parameter()][string] $HarnessCustomPAT,            # [CREATE] harness PAT (default is community HarnessEvents account)
+    [Parameter()][switch] $gcp,                         # [CREATE] create gcp classroom for event
+    [Parameter()][string] $googleCloudProjectOverride,  # debug option: override project creation to use a specific project
+    [Parameter()][int] $hourLimit,                      # [REMOVE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
+    [Parameter()][string] $eventName,                   # [CREATE] specify event name
+    [Parameter()][string] $instructorName,              # [CREATE] specify instructorName (defaults to current user)
+    [Parameter()][int] $timeOffset,                     # debug option: set hour offset when creating event to test event cleanup
+    [Parameter()][switch] $verboseMode,                 # debug option: level 0 (debug/info/errors) output (versus standard level 1 info/errors)
+    [Parameter()][switch] $whatif,                      # debug option:testing option to prevent significant changes
+    [Parameter()][int] $userCount                       # [CREATE MODE] specify number of attendees (default is 1)
 )
 
 ## Core Functions
@@ -402,14 +404,14 @@ function Test-PreFlight {
     
 }
 function Save-Event {
-    Set-Prefs -k "EventCreateTime" -v $(Get-Date)
+    Set-Prefs -k "EventCreateTime" -v $(Get-Date).AddHours($timeOffset)
     $datePrefix = $(Get-Date -Uformat "%Y-%m")
     $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.GoogleEventName + ".json"
     gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName --no-user-output-enabled
 }
 
 ## Actions
-function Get-HeadlessMode {
+function Get-CreateMode {
     Send-Update -t 1 -c "Setting up config for new event."
     # Error out with any problems
     $ErrorActionPreference = "Stop"
@@ -474,7 +476,7 @@ function Get-HeadlessMode {
     Test-Connectivity -harnessToken $harnessToken | Out-Null
     Sync-Event
     Disable-ServiceAccount
-    Send-Update -t 1 -c "End Headless Mode"
+    Send-Update -t 1 -c "End Create Mode"
     exit
 }
 function Get-JanitorMode {
@@ -551,7 +553,7 @@ function Get-JanitorMode {
             else {
                 Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat) env: $($e.HarnessEnv)"
             }
-            gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf)
+            if (-not $whatif) { gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf) }
         }
         else {
             # Event is still active- record it so we can wipe out any orphans later.
@@ -1009,7 +1011,7 @@ function New-User {
     return $response
 }
 function Remove-Event {
-    # V2 = splitting things up for headless mode refactor. leaving V1 for now for script mode
+    # V2 = splitting things up for Create mode refactor. leaving V1 for now for script mode
     # This version now only removes the event and user email
     [CmdletBinding()]
     param (
@@ -1044,7 +1046,11 @@ function Remove-Event {
     Send-Update -t 0 -c "Successfully deleted users"
     $groupUri = "https://admin.googleapis.com/admin/directory/v1/groups/$($id)"
     $GroupCheckUri = "https://admin.googleapis.com/admin/directory/v1/groups?domain=harnessevents.io&query=email=$($email)"
-    Send-Update -t 0 -c "Deleting group with uri: $groupUri"
+    if ($whatif) {
+        Send-Update -t 1 -c "whatif prevented: Deleting group: $email"
+        return
+    }
+    Send-Update -t 1 -c "Deleting group: $email"
     Invoke-RestMethod -Method 'Delete' -Uri $groupUri -Headers $headers | Out-null
     #Wait for group to be gone
     $counter = 0
@@ -1067,6 +1073,11 @@ function Remove-User {
         [string]
         $userEmail
     )
+    if ($whatif) {
+        Send-Update -t 1 -c "whatif prevented: Removing google user: $userEmail"
+        return $true
+    }
+    Send-Update -t 1 -c "Removing google user: $userEmail"
     $uri = "https://admin.googleapis.com/admin/directory/v1/users/$userEmail"
     $response = Invoke-RestMethod -Method 'Delete' -Uri $uri -Headers $headers
     return $response
@@ -2273,6 +2284,10 @@ function Remove-Delegate {
         [String]
         $delegateId
     )
+    if ($whatif) {
+        Send-Update -t 1 -c "whatif prevented: Removing hardness delegate: $($delegateId)"
+        return
+    }
     $uri = "https://app.harness.io/ng/api/delegate-setup/delegate/$($delegateId)?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)"
     Invoke-RestMethod -method 'DEL' -uri $uri -headers $HarnessHeaders -ContentType 'application/json' | Out-null
 }
@@ -2297,15 +2312,24 @@ function Remove-HarnessEventDetails {
         $harnessUsers = $response.data.content | Where-Object { $_.email.Contains("@harnessevents.io") }
         foreach ($user in $harnessUsers) {
             $killuseruri = "https://app.harness.io/ng/api/user/$($user.uuid)?accountIdentifier=$($account.id)"
+            if ($whatif) {
+                Send-Update -t 1 -c "whatif prevented: Removed $($user.email) from account $($account.id)"
+                break
+            }
             invoke-restmethod -uri $killuseruri -headers $HarnessHeaders -ContentType "application/json" -Method 'DEL' | Out-Null
             Send-Update -t 1 -c "Removed $($user.email) from account $($account.id)"
         }
         if ($account.account -eq "HarnessEvents") {
-            # Do specific things for HarnessEvents
-            Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
-            Send-Update -t 1 -c "Removing Harness org: $($account.org)"
-            $uri = "https://app.harness.io/ng/api/organizations/$($account.org)?accountIdentifier=$($account.id)"
-            Invoke-RestMethod -Method 'DEL' -headers $HarnessHeaders -uri $uri | Out-Null
+            if ($whatif) {
+                Send-Update -1 -c "whatif prevented: Removing Harness org: $($account.org)"
+            }
+            else {
+                # Do specific things for HarnessEvents
+                Send-Update -t 1 -c "Skipping flag 'after event' state since this is the common account"
+                Send-Update -t 1 -c "Removing Harness org: $($account.org)"
+                $uri = "https://app.harness.io/ng/api/organizations/$($account.org)?accountIdentifier=$($account.id)"
+                Invoke-RestMethod -Method 'DEL' -headers $HarnessHeaders -uri $uri | Out-Null
+            }
         }
         else {
             Send-Update -t 2 -c "NEED TO REDO LOGIC HERE for V2 version of customer account org cleanup!"
@@ -2395,7 +2419,7 @@ function Update-FeatureFlag {
     catch {
         $errorResponse = $_ | Convertfrom-Json
         if ($errorResponse.message.contains("Failed to find feature activation")) {
-            Send-Update -t 2 -c "Continuing- but $flag is not found.  Confirm the flag was deleted and then ensure it's removed from both /harnesseventsdata/config/featureflags*.json files."
+            Send-Update -t 2 -c "Continuing- but $flag is not found. Confirm the flag was deleted and then ensure it's removed from both /harnesseventsdata/config/featureflags*.json files."
             return $false
         }
         Send-Update -t 0 -c "Feature flag failed with uri: $uri"
@@ -2533,7 +2557,11 @@ function Remove-GCPProject {
         [string]
         $id
     )
-    Send-Update -t 1 -o -c "Removing Google Project" -r "gcloud projects delete $id --quiet"
+    if ($whatif) {
+        Send-Update -t 1 -c "whatif prevented: Removing Google Project $id"
+        return
+    }
+    Send-Update -t 1 -o -c "Removing Google Project $id" -r "gcloud projects delete $id --quiet"
     $Counter = 0
     Do {
         $counter++
@@ -2550,7 +2578,7 @@ function Remove-GCPProject {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 switch ($action) {
-    "create" { Get-HeadlessMode }
+    "create" { Get-CreateMode }
     "remove" { Get-JanitorMode }
     Default { Get-Help }
 }
