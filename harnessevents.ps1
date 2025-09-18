@@ -682,7 +682,6 @@ function Disable-ServiceAccount {
 function Enable-ServiceAccount {
     $currentUser = gcloud auth list --format='value(account)' --filter=status=active
     if ($currentUser.contains("cloudsdk")) {
-        #$initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
         # Already running as service account - all set
         return
     }
@@ -697,7 +696,13 @@ function Enable-ServiceAccount {
         Send-Update -t 3 -c "HarnessEventsAccount not found. You might need to run 'gcloud auth login' again with your work email."
     }
     Send-Update -t 1 -c "Activating service account" -r "gcloud auth activate-service-account --key-file=harnessevents.json --no-user-output-enabled"
-
+    $credentialsJson = Get-Content 'harnessevents.json' -Raw | Convertfrom-Json
+    Set-Prefs -k "ServiceAccountEmail" -v $credentialsJson.client_email
+    $PrivateKey = $credentialsJson.private_key -replace '-----BEGIN PRIVATE KEY-----\n' -replace '\n-----END PRIVATE KEY-----\n' -replace '\n'
+    Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
+    if ((Test-Path("harnessevents.json"))) {
+        Remove-Item -path "harnessevents.json"
+    }
 }
 function Get-Allusers {
     Get-GoogleAccessToken
@@ -760,10 +765,6 @@ function Get-GoogleAccessToken {
     }
     # Weird issues with project errors even when specifying project in cases where "cached" project was removed.  I hate you, Google.
     gcloud config set project $config.AdminProjectId --no-user-output-enabled
-    $credentialsJson = Get-Content 'harnessevents.json' -Raw | Convertfrom-Json
-    Set-Prefs -k "ServiceAccountEmail" -v $credentialsJson.client_email
-    $PrivateKey = $credentialsJson.private_key -replace '-----BEGIN PRIVATE KEY-----\n' -replace '\n-----END PRIVATE KEY-----\n' -replace '\n'
-    Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
     # Cleanup due to Google's stupid requirement that the json be an actual *file*.  Eat it, Google.
     if (Test-Path -Path harnessevents.json) { Remove-Item harnessevents.json }
     # Get API token to access Google Drive and Google Sheets
