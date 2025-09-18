@@ -559,9 +559,10 @@ function Get-JanitorMode {
             # Event is still active- record it so we can wipe out any orphans later.
             # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
             $validEvents += $e.GoogleEventEmail
-            if ($e.GoogleClassroom) { $validGCPProjects += $e.GoogleClassroom }
-            if ($e.AwsClassroom) { $validAWSProjects += $e.AwsClassroom }
-            if ($e.AzureClassroom) { $validAzureProjects += $e.AzureClassroom }
+            $validGCPProjects += $e.HarnessOrg.replace("_","-")
+            # if ($e.GoogleClassroom) { $validGCPProjects += $e.GoogleClassroom }
+            # if ($e.AwsClassroom) { $validAWSProjects += $e.AwsClassroom }
+            # if ($e.AzureClassroom) { $validAzureProjects += $e.AzureClassroom }
         }
     }
     Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
