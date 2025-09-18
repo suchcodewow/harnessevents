@@ -481,6 +481,7 @@ function Get-CreateMode {
 }
 function Get-JanitorMode {
     $cliUser = gcloud auth list --format='value(account)' --filter=status=active
+    $allUsers = gcloud auth list --format='value(account)'
     Set-Prefs -k "CLIUser" -v $cliUser -o
     # Use cli provided instructor name if present
     if ($instructorName) {
@@ -496,7 +497,7 @@ function Get-JanitorMode {
         exit
     }
     # Make sure user isn't trying to run this as cloudsdk
-    if ($currentUser.Contains("cloudsdk")) {
+    if ($currentUser.Contains("cloudsdk") -and $allUsers.count -gt 1) {
         Send-Update -t 2 -c "You're running as the HarnessEvents CloudSDK service account."
         Send-Update -t 2 -c "Switch to your work account with <gcloud config set account 'your email'>"
         exit
