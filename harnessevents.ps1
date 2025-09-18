@@ -2311,7 +2311,7 @@ function Remove-HarnessEventDetails {
         [object]
         $accounts #account, org, id, pat, env
     )
-    $emailList = "sandwich"
+    $emailList = "none"
     foreach ($account in $accounts) {
         # Remove event users from Harness Account
         $HarnessHeaders = @{
