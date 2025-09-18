@@ -682,7 +682,7 @@ function Disable-ServiceAccount {
 function Enable-ServiceAccount {
     $currentUser = gcloud auth list --format='value(account)' --filter=status=active
     if ($currentUser.contains("cloudsdk")) {
-        $credentialsJson = Get-Content 'keyfile.json' -Raw | Convertfrom-Json
+        $credentialsJson = Get-Content 'key.json' -Raw | Convertfrom-Json
         Set-Prefs -k "ServiceAccountEmail" -v $credentialsJson.client_email
         $PrivateKey = $credentialsJson.private_key -replace '-----BEGIN PRIVATE KEY-----\n' -replace '\n-----END PRIVATE KEY-----\n' -replace '\n'
         Set-Prefs -k "ServiceAccountKey" -v $PrivateKey
