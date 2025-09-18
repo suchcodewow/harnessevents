@@ -572,7 +572,7 @@ function Get-JanitorMode {
     # Remove unattached  events
     $eventGroups = Get-UserGroups -allEvents
     Send-Update -t 1 -c "$($validEvents.count) valid / $($eventGroups.count) total events."
-    $Env:unattachedEvents = ""
+    $Env:unattachedEvents = "none"
     foreach ($e in $eventGroups) {
         if ($validEvents -notcontains $e.email) {
             Send-Update -t 1 -c "$($e.email) is no longer valid."
@@ -584,7 +584,7 @@ function Get-JanitorMode {
     #Remove unattached google projects
     $gcpProjects = Get-GCPProjectList
     Send-Update -t 1 -c "$($validGCPProjects.count) valid / $($gcpProjects.count) total google project(s)."
-    $Env:unattachedGoogleProjects = ""
+    $Env:unattachedGoogleProjects = "none"
     foreach ($project in $gcpProjects) {
         if ($validGCPProjects -notcontains $project.eventName) {
             Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
@@ -2311,7 +2311,7 @@ function Remove-HarnessEventDetails {
         [object]
         $accounts #account, org, id, pat, env
     )
-    $emailList = ""
+    $emailList = "none"
     foreach ($account in $accounts) {
         # Remove event users from Harness Account
         $HarnessHeaders = @{
