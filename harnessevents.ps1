@@ -513,6 +513,7 @@ function Get-JanitorMode {
     Get-GoogleAccessToken
     # Load all open events
     $openEvents = gcloud storage ls gs://harnesseventsdata/events/open/*.json --verbosity=none
+    # Check event for expiration based on time (-hourLimit flag) or user
     foreach ($eventJson in $openEvents) {
         $removeEvent = $false
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
@@ -547,6 +548,7 @@ function Get-JanitorMode {
                     id      = $e.HarnessAccountId
                     pat     = $e.HarnessPat
                     env     = $e.HarnessEnv
+                    creator = $e.GoogleUser
                 }
                 Send-Update -t 1 -c "Added $($e.HarnessOrg) in $($e.HarnessAccount) to expired events."
             }
@@ -560,9 +562,8 @@ function Get-JanitorMode {
             # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
             $validEvents += $e.GoogleEventEmail
             $validGCPProjects += $e.HarnessOrg.replace("_","-")
-            # if ($e.GoogleClassroom) { $validGCPProjects += $e.GoogleClassroom }
-            # if ($e.AwsClassroom) { $validAWSProjects += $e.AwsClassroom }
-            # if ($e.AzureClassroom) { $validAzureProjects += $e.AzureClassroom }
+            $validAWSProjects += $e.HarnessOrg.replace("_","-")
+            $validAzureProjects += $e.HarnessOrg.replace("_","-")
         }
     }
     Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
@@ -570,30 +571,37 @@ function Get-JanitorMode {
     # Remove unattached  events
     $eventGroups = Get-UserGroups -allEvents
     Send-Update -t 1 -c "$($validEvents.count) valid / $($eventGroups.count) total events."
+    $Env:unattachedEvents = ""
     foreach ($e in $eventGroups) {
         if ($validEvents -notcontains $e.email) {
             Send-Update -t 1 -c "$($e.email) is no longer valid."
             Remove-Event -email $e.email -id $e.id
+            if ($Env:unattachedEvents) { $Env:unattachedEvents += "," }
+            $Env:unattachedEvents += $e.email
         }
     }
     #Remove unattached google projects
     $gcpProjects = Get-GCPProjectList
     Send-Update -t 1 -c "$($validGCPProjects.count) valid / $($gcpProjects.count) total google project(s)."
+    $Env:unattachedGoogleProjects = ""
     foreach ($project in $gcpProjects) {
         if ($validGCPProjects -notcontains $project.eventName) {
             Send-Update -t 1 -c "Removing project $($project.name) with google id $($project.projectId)"
             Remove-GCPProject -id $project.projectId
+            if ($Env:unattachedGoogleProjects) { $Env:unattachedGoogleProjects += "," }
+            $Env:unattachedGoogleProjects += $project.name
         }
     }
     if ($config.GoogleUser.contains("@harness.io")) {
         Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
     }
     if ($hourLimit) {
+        # If this hour limit based (likely running as the main script), remove any unattached users swimming around the HarnessEvents community account.
         Remove-HarnessUsers
     }
-    if ($config.GoogleUser.contains("@harness.io")) {
-        Send-Update -t 1 -c "Switching to original account" -r "gcloud config set account $($config.GoogleUser) --no-user-output-enabled"
-    }
+    Send-Update -t 1 -c "Events to email instructors: $($Env:EmailList)"
+    Send-Update -t 1 -c "Unattached event email removed to notify workshop committee: $($Env:unattachedEvents)"
+    Send-Update -t 1 -c "Unattached google projects removed to notify workshop committee: $($Env:unattachedGoogleProjects)"
     Send-Update -t 1 -c "End event cleanup" 
     exit
 }
@@ -1076,7 +1084,6 @@ function Remove-User {
     )
     if ($whatif) {
         Send-Update -t 1 -c "whatif prevented: Removing google user: $userEmail"
-        return $true
     }
     Send-Update -t 1 -c "Removing google user: $userEmail"
     $uri = "https://admin.googleapis.com/admin/directory/v1/users/$userEmail"
@@ -2299,6 +2306,7 @@ function Remove-HarnessEventDetails {
         [object]
         $accounts #account, org, id, pat, env
     )
+    $emailList = ""
     foreach ($account in $accounts) {
         # Remove event users from Harness Account
         $HarnessHeaders = @{
@@ -2347,7 +2355,12 @@ function Remove-HarnessEventDetails {
             #     Start-Sleep -s 2
             # } until (-not $flagsNeeded)
         }
+        if ($emailList) {
+            $emailList += ","
+        }
+        $emailList += $account.org + ";" + $account.creator
     }
+    $Env:EmailList = $emailList
 }
 function Test-Connectivity {
     [CmdletBinding()]

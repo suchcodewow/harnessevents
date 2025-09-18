@@ -37,7 +37,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["remove", "-c", "-v", "-hourLimit 48", "-whatif"]
+      "args": ["remove", "-c", "-v", "-hourLimit 48"]
     }
   ]
 }
