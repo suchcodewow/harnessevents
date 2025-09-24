@@ -3,10 +3,10 @@
 
 param (
     [Parameter(Position = 0)][string]$action,           # action to execute
-    [Parameter()][switch] $aws,                          # [CREATE] create aws classroom for event TODO
+    [Parameter()][switch] $aws,                         # [CREATE] create aws classroom for event TODO
     [Parameter()][switch] $azure,                       # [CREATE] create azure classroom for event TODO
     [Parameter()][switch] $cloudCommands,               # debug option: enable to show commands
-    [Parameter()][string] $HarnessCustomPAT,            # [CREATE] harness PAT (default is community HarnessEvents account)
+    [Parameter()][string] $HarnessPAT,                  # [CREATE] harness PAT (default is community HarnessEvents account)
     [Parameter()][switch] $gcp,                         # [CREATE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # debug option: override project creation to use a specific project
     [Parameter()][int] $hourLimit,                      # [REMOVE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
@@ -460,20 +460,20 @@ function Get-CreateMode {
     if ($azure) { Set-Prefs -k "AzureClassroom" -v $config.HarnessOrg.replace("_","-") }
     # Get Google Access token
     Get-GoogleAccessToken
-    # Save event details to 'open' events json folder
-    Save-Event
-    # Create the event
-    New-Event
     # Check connectivity
-    if ($HarnessCustomPAT) {
+    if ($HarnessPAT) {
         Send-Update -t 1 -c "Using provided Harness PAT"
-        $harnessToken = $HarnessCustomPat 
+        $harnessToken = $HarnessPAT 
     }
     else {
         Send-Update -t 1 -c "Using community Harness Account"
         $harnessToken = $config.HarnessEventsPAT 
     }
     Test-Connectivity -harnessToken $harnessToken | Out-Null
+    # Save event details to 'open' events json folder
+    Save-Event
+    # Create the event
+    New-Event
     Sync-Event
     Disable-ServiceAccount
     Send-Update -t 1 -c "End Create Mode"
@@ -2347,18 +2347,18 @@ function Remove-HarnessEventDetails {
         }
         else {
             Send-Update -t 2 -c "NEED TO REDO LOGIC HERE for V2 version of customer account org cleanup!"
-            # $featureFlagsStart = Get-Content -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
-            # $currentFlags = Get-FeatureFlagStatus
-            # $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-            # foreach ($flag in $flagsNeeded) {
-            #     Update-FeatureFlag -flag $flag.Name -value $flag.Value
-            # }
-            # do {
-            #     $currentFlags = Get-FeatureFlagStatus
-            #     $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
-            #     Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
-            #     Start-Sleep -s 2
-            # } until (-not $flagsNeeded)
+            $featureFlagsStart = Get-Content -path ./harnesseventsdata/config/featureflagsend.json | Convertfrom-Json
+            $currentFlags = Get-FeatureFlagStatus
+            $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+            foreach ($flag in $flagsNeeded) {
+                Update-FeatureFlag -flag $flag.Name -value $flag.Value
+            }
+            do {
+                $currentFlags = Get-FeatureFlagStatus
+                $flagsNeeded = Compare-Object @($featureFlagsStart.PSObject.Properties) @($currentFlags.PSObject.Properties) -Property Name, Value | Where-Object { $_.SideIndicator -eq "<=" }
+                Send-Update -t 1 -c "Waiting for $($flagsNeeded.count) flag(s)..."
+                Start-Sleep -s 2
+            } until (-not $flagsNeeded)
         }
         if ($emailList) {
             $emailList += ","
@@ -2389,8 +2389,7 @@ function Test-Connectivity {
         $response = Invoke-RestMethod -Method 'GET' -ContentType "application/json" -uri $uri -Headers $TestHarnessHeaders
     }
     catch {
-        Send-Update -t 2 -c "Failed to connect to Harness API: $($_.Exception.Message)"
-        return $false
+        Send-Update -t 3 -c "Failed to connect to Harness API: $($_.Exception.Message)"
     }
     Send-Update -t 1 -c "is valid."
     Set-Prefs -k "HarnessAccount" -v $response.data.companyName
