@@ -2360,6 +2360,7 @@ function Remove-HarnessEventDetails {
                 Start-Sleep -s 2
             } until (-not $flagsNeeded)
         }
+        if ($emailList -eq "none") { $emailList = "" }
         if ($emailList) {
             $emailList += ","
         }
