@@ -481,7 +481,7 @@ function Get-CreateMode {
 }
 function Get-JanitorMode {
     $cliUser = gcloud auth list --format='value(account)' --filter=status=active
-    $allUsers = gcloud auth list --format='value(account)'
+    $allUsers = gcloud auth list --format='value(account)' --filter='-ACCOUNT:-compute'
     Set-Prefs -k "CLIUser" -v $cliUser -o
     # Use cli provided instructor name if present
     if ($instructorName) {
@@ -1323,6 +1323,178 @@ function Sync-Event {
 }
 
 ## Harness Functions
+function Add-Account {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [string]
+        $accountName
+    )
+    $baseUri = "https://admin-qa.harness.io/api"
+    $startDate = [System.DateTimeOffset]::new( (Get-Date) ).ToUnixTimeSeconds() * 1000
+    $expirationDate = [System.DateTimeOffset]::new( (Get-Date).AddDays(30)).ToUnixTimeSeconds() * 1000
+    $harnessPortalToken = Send-Update -t 1 -c "Pulling Harness Portal Token" -r "gcloud secrets versions access latest --secret='HarnessEventsQaAdmin' --project=$($config.AdminProjectId)"
+    $uri = "$baseUri/accounts/v2"
+    $headers = @{
+        "authorization" = "Bearer $harnessPortalToken"
+    }
+    $body = @{
+        "accountName"    = $accountName
+        "companyName"    = $accountName
+        "adminUserEmail" = "admin@harnessevents.io"
+        "accountStatus"  = "ACTIVE"
+        "accountType"    = "PAID"
+        "clusterType"    = "PAID"
+        "clusterId"      = "prod1"
+        "licenseUnits"   = 100
+        "expiryTime"     = $expirationDate
+        "nextGenEnabled" = $true
+    } | Convertto-Json
+    Send-Update -t 1 -c "Creating account: $accountName"
+    $accountObject = invoke-restmethod -Method Post -body $body -Headers $headers -uri $uri -ContentType application/json
+    Set-Prefs -k "HarnessAccount" -v $accountObject.accountName
+    Set-Prefs -k "HarnessAccountId" -v $accountObject.uuid
+    #Set-Prefs -k "HarnessPAT" -v $harnessToken
+    $uriLicense = "$baseUri/accounts/$($config.HarnessAccountId)/ng/license?clusterId=prod1&clusterType=PAID"
+    $bodyCDLicense = @{
+        "moduleType"            = "CD"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+        "cdLicenseType"         = "DEVELOPER_360"
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding CD License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyCDLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodyCILicense = @{
+        "moduleType"            = "CI"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding CI License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyCILicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodyIACMLicense = @{
+        "moduleType"            = "IACM"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding IACM License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyIACMLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodyCHAOSLicense = @{
+        "moduleType"            = "CHAOS"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+        "chaosLicenseType"      = "DEVELOPER_360"
+        "secondaryEntitlement"  = 33
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding CHAOS License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyCHAOSLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodyIDPLicense = @{
+        "moduleType"            = "IDP"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding IDP License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyIDPLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodySTOLicense = @{
+        "moduleType"            = "STO"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding STO License to: $accountName"
+    invoke-restmethod -Method Put -body $bodySTOLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodySSCALicense = @{
+        "moduleType"            = "SSCA"
+        "licenseType"           = "PAID"
+        "edition"               = "ENTERPRISE"
+        "accountIdentifier"     = $($config.HarnessAccountId)
+        "startTime"             = $startDate
+        "expiryTime"            = $expirationDate
+        "status"                = "ACTIVE"
+        "premiumSupport"        = true
+        "selfService"           = true
+        "developerLicenseCount" = 100
+        "numberOfExecutions"    = 10000
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding SSCA License to: $accountName"
+    invoke-restmethod -Method Put -body $bodySSCALicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodyHARLicense = @{
+        "moduleType"             = "HAR"
+        "licenseType"            = "PAID"
+        "edition"                = "ENTERPRISE"
+        "accountIdentifier"      = $($config.HarnessAccountId)
+        "startTime"              = $startDate
+        "expiryTime"             = $expirationDate
+        "status"                 = "ACTIVE"
+        "premiumSupport"         = true
+        "selfService"            = true
+        "maxStorageSizeInString" = "1GiB"
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding HAR License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyHARLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+
+    $bodyHARLicense = @{
+        "moduleType"        = "DBOPS"
+        "licenseType"       = "PAID"
+        "edition"           = "ENTERPRISE"
+        "accountIdentifier" = $($config.HarnessAccountId)
+        "startTime"         = $startDate
+        "expiryTime"        = $expirationDate
+        "status"            = "ACTIVE"
+        "premiumSupport"    = true
+        "selfService"       = true
+        "instanceCount"     = 100
+    } | Convertto-Json
+    Send-Update -t 1 -c "Adding DBOPS License to: $accountName"
+    invoke-restmethod -Method Put -body $bodyHARLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+}
 function Add-AttendeeRole {
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/roles"
     $body = @{
