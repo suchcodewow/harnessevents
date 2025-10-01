@@ -1330,10 +1330,64 @@ function Add-Account {
         [string]
         $accountName
     )
-    $baseUri = "https://admin-qa.harness.io/api"
+    
     $startDate = [System.DateTimeOffset]::new( (Get-Date) ).ToUnixTimeSeconds() * 1000
     $expirationDate = [System.DateTimeOffset]::new( (Get-Date).AddDays(30)).ToUnixTimeSeconds() * 1000
-    $harnessPortalToken = Send-Update -t 1 -c "Pulling Harness Portal Token" -r "gcloud secrets versions access latest --secret='HarnessEventsQaAdmin' --project=$($config.AdminProjectId)"
+    $harnessPortalToken = Send-Update -t 1 -c "Retrieving Harness Portal Token" -r "gcloud secrets versions access latest --secret='HarnessEventsQaAdmin' --project=$($config.AdminProjectId)"
+    $harnessEventsEmail = Send-Update -t 1 -c "Retrieving Harness Admin Email" -r "gcloud secrets versions access latest --secret='HarnessEventsEmail' --project=$($config.AdminProjectId)"
+    $harnessEventsPassword = Send-Update -t 1 -c "Retrieving Harness Admin Password" -r "gcloud secrets versions access latest --secret='HarnessEventsPassword' --project=$($config.AdminProjectId)"
+    # Get bearer token
+    $uriBearer = "https://qa.harness.io/gateway/api/users/login?accountId=6XocY3yWS8aGZxE61uvmPg"
+    $credential = "$($harnessEventsEmail):$harnessEventsPassword"
+    $Bytes = [System.Text.Encoding]::UTF8.GetBytes($credential)
+    $EncodedText = [Convert]::ToBase64String($Bytes)
+    $bodyBearer = @{
+        "authorization" = "Basic $EncodedText"
+    } | ConvertTo-Json
+    $response = invoke-restmethod -Method Post -body $bodyBearer -uri $uriBearer -ContentType 'application/json'
+    $bearerToken = $response.resource.token
+    $parentIdentifier = $response.resource.uuid
+    write-host $bearerToken
+    # Create the Api Key
+    $bodyApiKey = @{
+        "identifier"        = "eventskey"
+        "name"              = "eventskey"
+        "description"       = ""
+        "accountIdentifier" = "6XocY3yWS8aGZxE61uvmPg"
+        "apiKeyType"        = "USER"
+        "parentIdentifier"  = $parentIdentifier
+    } | Convertto-Json
+    $headerApiKey = @{
+        "authorization" = "Bearer $bearerToken"
+    }
+    $uriApiKey = "https://qa.harness.io/ng/api/apikey?accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
+    invoke-restmethod -Method Post -body $bodyApiKey -uri $uriApiKey -Headers $headerApiKey -ContentType 'application/json'
+    # Create the Token
+    $bodyToken = @{
+        "identifier"        = "eventtoken"
+        "name"              = "eventtoken"
+        "description"       = ""
+        "accountIdentifier" = "6XocY3yWS8aGZxE61uvmPg"
+        "apiKeyType"        = "USER"
+        "apiKeyIdentifier"  = "eventskey"
+        "parentIdentifier"  = $parentIdentifier
+        "expiry"            = "-1"
+        "validTo"           = 4102376400000
+        "validFrom"         = $startDate
+
+    } | Convertto-Json
+    $headerToken = @{
+        "authorization" = "Bearer $bearerToken"
+    }
+    write-host $bodyToken
+    $uriToken = "https://qa.harness.io/gateway/ng/api/token?routingId=6XocY3yWS8aGZxE61uvmPg&accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
+    write-host $uriToken
+    $responseToken = invoke-restmethod -Method Post -body $bodyToken -uri $uriToken -Headers $headerToken -ContentType 'application/json'
+    Test-Connectivity -harnessToken $responseToken.data
+    exit
+
+    # Create new account
+    $baseUri = "https://admin-qa.harness.io/api"
     $uri = "$baseUri/accounts/v2"
     $headers = @{
         "authorization" = "Bearer $harnessPortalToken"
@@ -1341,7 +1395,7 @@ function Add-Account {
     $body = @{
         "accountName"    = $accountName
         "companyName"    = $accountName
-        "adminUserEmail" = "admin@harnessevents.io"
+        "adminUserEmail" = $harnessEventsEmail
         "accountStatus"  = "ACTIVE"
         "accountType"    = "PAID"
         "clusterType"    = "PAID"
@@ -1662,7 +1716,7 @@ function Add-Filter {
         [string]
         $name
     )
-    # Need to use a combination of documented and undocumented API's here.  It's ok though.  I'm all cried out at this point.
+    # Need to use a combination of documented and undocumented API's here. It's ok though.  I'm all cried out at this point.
     # The API can't hurt me any more.
     Switch ($filterType) {
         "Connector" {

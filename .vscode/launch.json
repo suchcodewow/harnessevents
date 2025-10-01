@@ -38,6 +38,13 @@
       "request": "launch",
       "script": "${file}",
       "args": ["remove", "-c", "-v", "-hourLimit 48"]
+    },
+    {
+      "name": "PowerShell: Quick reload script",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["-c", "-v"]
     }
   ]
 }
