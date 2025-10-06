@@ -336,7 +336,7 @@ function Send-Update {
             0 { $Params['ForegroundColor'] = "DarkBlue"; $start = "[.]" }
             1 { $Params['ForegroundColor'] = "DarkGreen"; $start = "[-]" }
             2 { $Params['ForegroundColor'] = "DarkRed"; $start = "[X]" }
-            3 { $Params['ForegroundColor'] = "DarkRed"; $start = "[XX] Existing with error: " }
+            3 { $Params['ForegroundColor'] = "DarkRed"; $start = "[XX] Exiting with error: " }
             default { $Params['ForegroundColor'] = "Gray"; $start = "" }
         }
     }
@@ -1330,65 +1330,40 @@ function Add-Account {
         [string]
         $accountName
     )
-    
+    ### Pull credential details
     $startDate = [System.DateTimeOffset]::new( (Get-Date) ).ToUnixTimeSeconds() * 1000
     $expirationDate = [System.DateTimeOffset]::new( (Get-Date).AddDays(30)).ToUnixTimeSeconds() * 1000
     $harnessPortalToken = Send-Update -t 1 -c "Retrieving Harness Portal Token" -r "gcloud secrets versions access latest --secret='HarnessEventsQaAdmin' --project=$($config.AdminProjectId)"
     $harnessEventsEmail = Send-Update -t 1 -c "Retrieving Harness Admin Email" -r "gcloud secrets versions access latest --secret='HarnessEventsEmail' --project=$($config.AdminProjectId)"
     $harnessEventsPassword = Send-Update -t 1 -c "Retrieving Harness Admin Password" -r "gcloud secrets versions access latest --secret='HarnessEventsPassword' --project=$($config.AdminProjectId)"
-    # Get bearer token
-    $uriBearer = "https://qa.harness.io/gateway/api/users/login?accountId=6XocY3yWS8aGZxE61uvmPg"
+    ### Get bearer token and account details
+    $uriBearer = "https://qa.harness.io/gateway/api/users/login"
     $credential = "$($harnessEventsEmail):$harnessEventsPassword"
     $Bytes = [System.Text.Encoding]::UTF8.GetBytes($credential)
     $EncodedText = [Convert]::ToBase64String($Bytes)
     $bodyBearer = @{
         "authorization" = "Basic $EncodedText"
     } | ConvertTo-Json
-    $response = invoke-restmethod -Method Post -body $bodyBearer -uri $uriBearer -ContentType 'application/json'
+    Try {
+        $response = invoke-restmethod -Method Post -body $bodyBearer -uri $uriBearer -ContentType 'application/json'
+    }
+    Catch {
+        if ($_.Exception.Response.StatusCode -eq "Forbidden") {
+            Send-Update -t 3 -c "Got 403 forbidden access Harness. Connect to VPN to continue."
+        }
+        write-host $_.ErrorDetails
+    }
     $bearerToken = $response.resource.token
     $parentIdentifier = $response.resource.uuid
-    write-host $bearerToken
-    # Create the Api Key
-    $bodyApiKey = @{
-        "identifier"        = "eventskey"
-        "name"              = "eventskey"
-        "description"       = ""
-        "accountIdentifier" = "6XocY3yWS8aGZxE61uvmPg"
-        "apiKeyType"        = "USER"
-        "parentIdentifier"  = $parentIdentifier
-    } | Convertto-Json
-    $headerApiKey = @{
-        "authorization" = "Bearer $bearerToken"
-    }
-    $uriApiKey = "https://qa.harness.io/ng/api/apikey?accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
-    invoke-restmethod -Method Post -body $bodyApiKey -uri $uriApiKey -Headers $headerApiKey -ContentType 'application/json'
-    # Create the Token
-    $bodyToken = @{
-        "identifier"        = "eventtoken"
-        "name"              = "eventtoken"
-        "description"       = ""
-        "accountIdentifier" = "6XocY3yWS8aGZxE61uvmPg"
-        "apiKeyType"        = "USER"
-        "apiKeyIdentifier"  = "eventskey"
-        "parentIdentifier"  = $parentIdentifier
-        "expiry"            = "-1"
-        "validTo"           = 4102376400000
-        "validFrom"         = $startDate
+    $accountList = $response.resource.accounts
+    ### Check if account already exists
+    if ($accountList.accountName.contains($accountName)) {
+        Send-Update -t 1 -c "An account with this name is already being managed by HarnessEvents."
 
-    } | Convertto-Json
-    $headerToken = @{
-        "authorization" = "Bearer $bearerToken"
     }
-    write-host $bodyToken
-    $uriToken = "https://qa.harness.io/gateway/ng/api/token?routingId=6XocY3yWS8aGZxE61uvmPg&accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
-    write-host $uriToken
-    $responseToken = invoke-restmethod -Method Post -body $bodyToken -uri $uriToken -Headers $headerToken -ContentType 'application/json'
-    Test-Connectivity -harnessToken $responseToken.data
     exit
-
-    # Create new account
-    $baseUri = "https://admin-qa.harness.io/api"
-    $uri = "$baseUri/accounts/v2"
+    ### Create new account
+    $uri = "https://admin-qa.harness.io/api/accounts/v2"
     $headers = @{
         "authorization" = "Bearer $harnessPortalToken"
     }
@@ -1548,6 +1523,42 @@ function Add-Account {
     } | Convertto-Json
     Send-Update -t 1 -c "Adding DBOPS License to: $accountName"
     invoke-restmethod -Method Put -body $bodyHARLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+    ### Create the Api Key
+    $bodyApiKey = @{
+        "identifier"        = "eventskey"
+        "name"              = "eventskey"
+        "description"       = ""
+        "accountIdentifier" = $($config.HarnessAccountId)
+        "apiKeyType"        = "USER"
+        "parentIdentifier"  = $parentIdentifier
+    } | Convertto-Json
+    $headerApiKey = @{
+        "authorization" = "Bearer $bearerToken"
+    }
+    $uriApiKey = "https://qa.harness.io/ng/api/apikey?accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
+    invoke-restmethod -Method Post -body $bodyApiKey -uri $uriApiKey -Headers $headerApiKey -ContentType 'application/json'
+    # Create the Token
+    $bodyToken = @{
+        "identifier"        = "eventtoken"
+        "name"              = "eventtoken"
+        "description"       = ""
+        "accountIdentifier" = "6XocY3yWS8aGZxE61uvmPg"
+        "apiKeyType"        = "USER"
+        "apiKeyIdentifier"  = "eventskey"
+        "parentIdentifier"  = $parentIdentifier
+        "expiry"            = "-1"
+        "validTo"           = 4102376400000
+        "validFrom"         = $startDate
+
+    } | Convertto-Json
+    $headerToken = @{
+        "authorization" = "Bearer $bearerToken"
+    }
+    write-host $bodyToken
+    $uriToken = "https://qa.harness.io/gateway/ng/api/token?routingId=6XocY3yWS8aGZxE61uvmPg&accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
+    write-host $uriToken
+    $responseToken = invoke-restmethod -Method Post -body $bodyToken -uri $uriToken -Headers $headerToken -ContentType 'application/json'
+    Test-Connectivity -harnessToken $responseToken.data
 }
 function Add-AttendeeRole {
     $uri = "https://app.harness.io/v1/orgs/$($config.HarnessOrg)/roles"
@@ -2822,6 +2833,7 @@ function Remove-GCPProject {
 ## Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
+Add-Account -a globalcorp
 switch ($action) {
     "create" { Get-CreateMode }
     "remove" { Get-JanitorMode }
