@@ -19,6 +19,13 @@
       "args": ["create", "-c", "-v", "-eventName builder", "-gcp"]
     },
     {
+      "name": "PowerShell: Create new account and new event",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}",
+      "args": ["create", "-c", "-v", "-eventName builder", "-newAccount GlobalMan"]
+    },
+    {
       "name": "PowerShell: Create Random new event",
       "type": "PowerShell",
       "request": "launch",

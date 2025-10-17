@@ -6,16 +6,17 @@ param (
     [Parameter()][switch] $aws,                         # [CREATE] create aws classroom for event TODO
     [Parameter()][switch] $azure,                       # [CREATE] create azure classroom for event TODO
     [Parameter()][switch] $cloudCommands,               # debug option: enable to show commands
-    [Parameter()][string] $HarnessPAT,                  # [CREATE] harness PAT (default is community HarnessEvents account)
+    [Parameter()][string] $eventName,                   # [CREATE] specify event name
     [Parameter()][switch] $gcp,                         # [CREATE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # debug option: override project creation to use a specific project
+    [Parameter()][string] $HarnessPAT,                  # [CREATE] harness PAT (default is community HarnessEvents account)
     [Parameter()][int] $hourLimit,                      # [REMOVE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
-    [Parameter()][string] $eventName,                   # [CREATE] specify event name
     [Parameter()][string] $instructorName,              # [CREATE] specify instructorName (defaults to current user)
+    [Parameter()][string] $newAccount,                  # [CREATE] specify new account name (will create account, licenses, PAT)
     [Parameter()][int] $timeOffset,                     # debug option: set hour offset when creating event to test event cleanup
+    [Parameter()][int] $userCount,                      # [CREATE MODE] specify number of attendees (default is 1)
     [Parameter()][switch] $verboseMode,                 # debug option: level 0 (debug/info/errors) output (versus standard level 1 info/errors)
-    [Parameter()][switch] $whatif,                      # debug option:testing option to prevent significant changes
-    [Parameter()][int] $userCount                       # [CREATE MODE] specify number of attendees (default is 1)
+    [Parameter()][switch] $whatif                       # debug option:testing option to prevent significant changes
 )
 
 ## Core Functions
@@ -34,7 +35,6 @@ function Get-Randomstring {
     )
     if (-not $characterCount) { $characterCount = 6 }
     return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
-
 }
 function Get-Prefs($scriptPath) {
     # Do the things for the command line switches selected
@@ -421,20 +421,18 @@ function Get-CreateMode {
     if ($instructorName) {
         $currentUser = $instructorName
     }
-    else { 
+    else {
         # this will use the cloudsdk account- typically used for daily testing
         $currentUser = $cliUser
     }
     if (-not $currentUser) {
         Send-Update -t 2 -c "No google user authentication found.  Is it illegal in 23 US states to continue without one.  Nice try though."
-        Send-Update -t 2 -c "Run <gcloud auth login> and login with your work email."
-        exit
+        Send-Update -t 3 -c "Run <gcloud auth login> and login with your work email."
     }
     # Make sure user isn't trying to run this as cloudsdk
     if ($currentUser.Contains("cloudsdk")) {
         Send-Update -t 2 -c "You're running as the HarnessEvents CloudSDK service account."
-        Send-Update -t 2 -c "Switch to your work account with <gcloud config set account 'your email'>"
-        exit
+        Send-Update -t 3 -c "Switch to your work account with <gcloud config set account 'your email'>"
     }
     Send-Update -t 0 -c "Successfully identified current user: $currentUser"
     # Start saving configuration
@@ -460,6 +458,10 @@ function Get-CreateMode {
     if ($azure) { Set-Prefs -k "AzureClassroom" -v $config.HarnessOrg.replace("_","-") }
     # Get Google Access token
     Get-GoogleAccessToken
+    # Create account if requested
+    if ($newAccount) {
+        Add-Account -accountName $newAccount
+    }
     # Check connectivity
     if ($HarnessPAT) {
         Send-Update -t 1 -c "Using provided Harness PAT"
@@ -2833,7 +2835,6 @@ function Remove-GCPProject {
 ## Main
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
-Add-Account -a globalcorp
 switch ($action) {
     "create" { Get-CreateMode }
     "remove" { Get-JanitorMode }
