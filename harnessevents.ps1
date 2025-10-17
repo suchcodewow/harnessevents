@@ -1359,12 +1359,10 @@ function Add-Account {
     $bearerToken = $response.resource.token
     $parentIdentifier = $response.resource.uuid
     $accountList = $response.resource.accounts
-    $accountList
     ### Check if account already exists
     if ($accountList.accountName.contains($accountName)) {
         Send-Update -t 1 -c "An account with this name is already being managed by HarnessEvents."
     }
-    exit
     ### Create new account
     $uri = "https://admin.harness.io/api/accounts/v2"
     $headers = @{
@@ -1383,7 +1381,15 @@ function Add-Account {
         "nextGenEnabled" = $true
     } | Convertto-Json
     Send-Update -t 1 -c "Creating account: $accountName"
-    $accountObject = invoke-restmethod -Method Post -body $body -Headers $headers -uri $uri -ContentType application/json
+    Try {
+        $accountObject = invoke-restmethod -Method Post -body $body -Headers $headers -uri $uri -ContentType application/json
+    }
+    catch {
+        if ($_.Exception.Response.StatusCode -eq "Forbidden") {
+            Send-Update -t 3 -c "Got 403 forbidden access Harness. Connect to VPN to continue."
+        }
+        write-host $_.ErrorDetails
+    }
     Set-Prefs -k "HarnessAccount" -v $accountObject.accountName
     Set-Prefs -k "HarnessAccountId" -v $accountObject.uuid
     #Set-Prefs -k "HarnessPAT" -v $harnessToken
@@ -1512,7 +1518,7 @@ function Add-Account {
     Send-Update -t 1 -c "Adding HAR License to: $accountName"
     invoke-restmethod -Method Put -body $bodyHARLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
 
-    $bodyHARLicense = @{
+    $bodyDBOPSLicense = @{
         "moduleType"        = "DBOPS"
         "licenseType"       = "PAID"
         "edition"           = "ENTERPRISE"
@@ -1525,7 +1531,8 @@ function Add-Account {
         "instanceCount"     = 100
     } | Convertto-Json
     Send-Update -t 1 -c "Adding DBOPS License to: $accountName"
-    invoke-restmethod -Method Put -body $bodyHARLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+    invoke-restmethod -Method Put -body $bodyDBOPSLicense -Headers $headers -uri $uriLicense -ContentType "application/json" | Out-Null
+    
     ### Create the Api Key
     $bodyApiKey = @{
         "identifier"        = "eventskey"
@@ -1538,14 +1545,14 @@ function Add-Account {
     $headerApiKey = @{
         "authorization" = "Bearer $bearerToken"
     }
-    $uriApiKey = "https://qa.harness.io/ng/api/apikey?accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
+    $uriApiKey = "https://app.harness.io/ng/api/apikey?accountIdentifier=$($config.HarnessAccountId)"
     invoke-restmethod -Method Post -body $bodyApiKey -uri $uriApiKey -Headers $headerApiKey -ContentType 'application/json'
     # Create the Token
     $bodyToken = @{
         "identifier"        = "eventtoken"
         "name"              = "eventtoken"
         "description"       = ""
-        "accountIdentifier" = "6XocY3yWS8aGZxE61uvmPg"
+        "accountIdentifier" = $($config.HarnessAccountId)
         "apiKeyType"        = "USER"
         "apiKeyIdentifier"  = "eventskey"
         "parentIdentifier"  = $parentIdentifier
@@ -1557,9 +1564,9 @@ function Add-Account {
     $headerToken = @{
         "authorization" = "Bearer $bearerToken"
     }
-    write-host $bodyToken
+    #write-host $bodyToken
     $uriToken = "https://qa.harness.io/gateway/ng/api/token?routingId=6XocY3yWS8aGZxE61uvmPg&accountIdentifier=6XocY3yWS8aGZxE61uvmPg"
-    write-host $uriToken
+    #write-host $uriToken
     $responseToken = invoke-restmethod -Method Post -body $bodyToken -uri $uriToken -Headers $headerToken -ContentType 'application/json'
     Test-Connectivity -harnessToken $responseToken.data
 }
