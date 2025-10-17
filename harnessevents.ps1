@@ -462,14 +462,16 @@ function Get-CreateMode {
     if ($newAccount) {
         Add-Account -accountName $newAccount
     }
-    # Check connectivity
-    if ($HarnessPAT) {
-        Send-Update -t 1 -c "Using provided Harness PAT"
-        $harnessToken = $HarnessPAT 
-    }
     else {
-        Send-Update -t 1 -c "Using community Harness Account"
-        $harnessToken = $config.HarnessEventsPAT 
+        # -OR- Check connectivity of provided token
+        if ($HarnessPAT) {
+            Send-Update -t 1 -c "Using provided Harness PAT"
+            $harnessToken = $HarnessPAT 
+        }
+        else {
+            Send-Update -t 1 -c "Using community Harness Account"
+            $harnessToken = $config.HarnessEventsPAT 
+        }
     }
     Test-Connectivity -harnessToken $harnessToken | Out-Null
     # Save event details to 'open' events json folder
