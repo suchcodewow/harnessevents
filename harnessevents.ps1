@@ -1333,7 +1333,7 @@ function Add-Account {
     ### Pull credential details
     $startDate = [System.DateTimeOffset]::new( (Get-Date) ).ToUnixTimeSeconds() * 1000
     $expirationDate = [System.DateTimeOffset]::new( (Get-Date).AddDays(30)).ToUnixTimeSeconds() * 1000
-    $harnessPortalToken = Send-Update -t 1 -c "Retrieving Harness Portal Token" -r "gcloud secrets versions access latest --secret='HarnessEventsQaAdmin' --project=$($config.AdminProjectId)"
+    $harnessPortalToken = Send-Update -t 1 -c "Retrieving Harness Portal Token" -r "gcloud secrets versions access latest --secret='HarnessEventsAdmin' --project=$($config.AdminProjectId)"
     $harnessEventsEmail = Send-Update -t 1 -c "Retrieving Harness Admin Email" -r "gcloud secrets versions access latest --secret='HarnessEventsEmail' --project=$($config.AdminProjectId)"
     $harnessEventsPassword = Send-Update -t 1 -c "Retrieving Harness Admin Password" -r "gcloud secrets versions access latest --secret='HarnessEventsPassword' --project=$($config.AdminProjectId)"
     ### Get bearer token and account details
@@ -1356,13 +1356,14 @@ function Add-Account {
     $bearerToken = $response.resource.token
     $parentIdentifier = $response.resource.uuid
     $accountList = $response.resource.accounts
+    $accountList
     ### Check if account already exists
     if ($accountList.accountName.contains($accountName)) {
         Send-Update -t 1 -c "An account with this name is already being managed by HarnessEvents."
     }
     exit
     ### Create new account
-    $uri = "https://admin-qa.harness.io/api/accounts/v2"
+    $uri = "https://admin.harness.io/api/accounts/v2"
     $headers = @{
         "authorization" = "Bearer $harnessPortalToken"
     }
