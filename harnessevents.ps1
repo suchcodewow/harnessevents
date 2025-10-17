@@ -1332,6 +1332,7 @@ function Add-Account {
         [string]
         $accountName
     )
+    Send-Update -t 1 -c "Adding new account: $accountName"
     ### Pull credential details
     $startDate = [System.DateTimeOffset]::new( (Get-Date) ).ToUnixTimeSeconds() * 1000
     $expirationDate = [System.DateTimeOffset]::new( (Get-Date).AddDays(30)).ToUnixTimeSeconds() * 1000
