@@ -23,7 +23,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v", "-eventName builder", "-newAccount GlobalMan"]
+      "args": ["create", "-c", "-v", "-eventName builder", "-newAccount asdf"]
     },
     {
       "name": "PowerShell: Create Random new event",
@@ -40,7 +40,7 @@
       "args": ["remove", "-c", "-v"]
     },
     {
-      "name": "PowerShell: Danger! Delete all workshops",
+      "name": "PowerShell: Danger! Delete all workshops older than 48h",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
