@@ -1346,7 +1346,7 @@ function Add-Account {
     $credential = "$($harnessEventsEmail):$harnessEventsPassword"
     $Bytes = [System.Text.Encoding]::UTF8.GetBytes($credential)
     $EncodedText = [Convert]::ToBase64String($Bytes)
-    $bodyBearer = @{
+    $script:bodyBearer = @{
         "authorization" = "Basic $EncodedText"
     } | ConvertTo-Json
     Try {
@@ -1554,10 +1554,20 @@ function Add-Account {
         write-host $_.ErrorDetails
     }
     $bearerToken = $response.resource.token
+    write-host $bearerToken
     $parentIdentifier = $response.resource.uuid
     ### Get existing API keys
-    $headerApiKey = @{
+    $script:headerApiKey = @{
         "Authorization" = "Bearer $bearerToken"
+    }
+    $tokenDeleteUri = "https://app.harness.io/gateway/ng/api/token/harnesseventstoken?routingId=$($config.HarnessAccountId)&accountIdentifier=$($config.HarnessAccountId)&apiKeyType=USER&parentIdentifier=$parentIdentifier&apiKeyIdentifier=harnesseventstoken"
+    Try {
+        Invoke-RestMethod -method Delete -uri $tokenDeleteUri -headers $headerApiKey
+    }
+    catch {
+        if ($_.Exception.Response.message.contains("") -eq "Forbidden") {
+            Send-Update -t 3 -c "Got 403 forbidden access Harness. Connect to VPN to continue."
+        }
     }
     $apikeyCheckUri = "https://app.harness.io/gateway/ng/api/apikey/aggregate?routingId=$($config.HarnessAccountId)&accountIdentifier=$($config.HarnessAccountId)&apiKeyType=USER&parentIdentifier=$parentIdentifier"
     Send-Update -t 0 -c "Getting api keys with uri: $apikeyCheckUri"
@@ -1567,7 +1577,7 @@ function Add-Account {
         ### Delete old key
         Send-Update -t 1 -c "Existing harnesseventskey found. Rotating key."
         $deleteKeyUri = "https://app.harness.io/gateway/ng/api/apikey/harnesseventskey?routingId=$($config.HarnessAccountId)&accountIdentifier=$($config.HarnessAccountId)&apiKeyType=USER&parentIdentifier=$parentIdentifier"
-        Invoke-RestMethod -method Delete -uri $deleteKeyUri -headers $headersApiKey
+        Invoke-RestMethod -method Delete -uri $deleteKeyUri -headers $headerApiKey
     }
 
     ### Create the Api Key
