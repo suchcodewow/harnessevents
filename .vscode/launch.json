@@ -9,49 +9,49 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-v"]
+      "args": ["-c", "-d"]
     },
     {
       "name": "PowerShell: Create new named event",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v", "-eventName builder", "-gcp"]
+      "args": ["create", "-c", "-d", "-eventName builder", "-gcp"]
     },
     {
       "name": "PowerShell: Create new account and new event",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v", "-eventName builder", "-newAccount asdf"]
+      "args": ["create", "-c", "-d", "-eventName builder", "-newAccount asdf"]
     },
     {
       "name": "PowerShell: Create Random new event",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-v"]
+      "args": ["create", "-c", "-d"]
     },
     {
       "name": "PowerShell: Remove My Events",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["remove", "-c", "-v"]
+      "args": ["remove", "-c", "-d"]
     },
     {
       "name": "PowerShell: Danger! Delete all workshops older than 48h",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["remove", "-c", "-v", "-hourLimit 48"]
+      "args": ["remove", "-c", "-d", "-hourLimit 48"]
     },
     {
       "name": "PowerShell: Quick reload script",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-verbose"]
+      "args": ["-c", "-d"]
     }
   ]
 }

@@ -6,6 +6,7 @@ param (
     [Parameter()][switch] $aws,                         # [CREATE] create aws classroom for event TODO
     [Parameter()][switch] $azure,                       # [CREATE] create azure classroom for event TODO
     [Parameter()][switch] $cloudCommands,               # debug option: enable to show commands
+    [Parameter()][switch] $detailedMode,                 # debug option: level 0 (debug/info/errors) output (versus standard level 1 info/errors)
     [Parameter()][string] $eventName,                   # [CREATE] specify event name
     [Parameter()][switch] $gcp,                         # [CREATE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # debug option: override project creation to use a specific project
@@ -15,7 +16,6 @@ param (
     [Parameter()][string] $newAccount,                  # [CREATE] specify new account name (will create account, licenses, PAT)
     [Parameter()][int] $timeOffset,                     # debug option: set hour offset when creating event to test event cleanup
     [Parameter()][int] $userCount,                      # [CREATE MODE] specify number of attendees (default is 1)
-    [Parameter()][switch] $verboseMode,                 # debug option: level 0 (debug/info/errors) output (versus standard level 1 info/errors)
     [Parameter()][switch] $whatif                       # debug option:testing option to prevent significant changes
 )
 
@@ -38,7 +38,7 @@ function Get-Randomstring {
 }
 function Get-Prefs($scriptPath) {
     # Do the things for the command line switches selected
-    if ($verboseMode) { $script:outputLevel = 0 } else { $script:outputLevel = 1 }
+    if ($detailedMode) { $script:outputLevel = 0 } else { $script:outputLevel = 1 }
     if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $false }
     $script:retainLog = $false
     if ($googleCloudProjectOverride) { $script:googleCloudProjectOverride }
