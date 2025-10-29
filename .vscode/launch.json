@@ -51,7 +51,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-v"]
+      "args": ["-c", "-verbose"]
     }
   ]
 }

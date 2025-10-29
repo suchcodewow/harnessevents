@@ -42,7 +42,7 @@ function Get-Prefs($scriptPath) {
     if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $false }
     $script:retainLog = $false
     if ($googleCloudProjectOverride) { $script:googleCloudProjectOverride }
-    #$script:ProgressPreference = "SilentlyContinue"
+    $script:ProgressPreference = "SilentlyContinue"
     if ($scriptPath) {
         $script:logFile = "$($scriptPath).log"
         Send-Update -t 0 -c "Log: $logFile"
