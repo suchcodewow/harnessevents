@@ -525,6 +525,7 @@ function Get-JanitorMode {
     # Check event for expiration based on time (-hourLimit flag) or user
     foreach ($eventJson in $openEvents) {
         $removeEvent = $false
+        $warnEvent = $false
         $e = gcloud storage cat $eventJson | ConvertFrom-Json
         if (-not $e.EventCreateTime) {
             $removeEvent = $true
@@ -536,8 +537,12 @@ function Get-JanitorMode {
                 $removeEvent = $true
                 Send-Update -t 1 -c "Event $($e.GoogleEventName) has EXPIRED at $([Math]::Round($TimeDiff.Totalhours,2)) hours old <Max age is: $hourLimit>" 
             }
+            elseif ($TimeDiff.TotalHours -ge $hourLimit * .75) {
+                $warnEvent = $true
+                Send-Update -t 1 -c "Event $($e.GoogleEventName) reached 75% time limit at $([Math]::Round($TimeDiff.Totalhours,2)) hours old [75% age is: $($hourLimit * .75)]"
+            }
             else {
-                Send-Update -t 1 -c "Event $($e.GoogleEventName) is valid at $([Math]::Round($TimeDiff.Totalhours,2)) hours old <Max age is: $hourLimit>"
+                Send-Update -t 1 -c "Event $($e.GoogleEventName) is valid at $([Math]::Round($TimeDiff.Totalhours,2)) hours old [Max age is: $hourLimit]"
             }
         }
         else {
@@ -566,6 +571,22 @@ function Get-JanitorMode {
             }
             if (-not $whatif) { gcloud storage mv $eventJson gs://harnesseventsdata/events/closed/$(Split-Path $eventJson -leaf) }
         }
+        elseif ($warnEvent) {
+            if ($e.HarnessAccount -and $e.HarnessOrg -and $e.HarnessAccountId -and $e.HarnessPat -and $e.HarnessEnv) {
+                $warningOrgs += [PSCustomObject]@{
+                    account = $e.HarnessAccount
+                    org     = $e.HarnessOrg
+                    id      = $e.HarnessAccountId
+                    pat     = $e.HarnessPat
+                    env     = $e.HarnessEnv
+                    creator = $e.GoogleUser
+                }
+                Send-Update -t 1 -c "Added $($e.HarnessOrg) in $($e.HarnessAccount) to events scheduled to expire soon."
+            }
+            else {
+                Send-Update -t 2 -c "Gross! One of these was missing- account: $($e.HarnessAccount) org: $($e.HarnessOrg) id: ($e.HarnessAccountId) pat: $($e.HarnessPat) env: $($e.HarnessEnv)"
+            }
+        }
         else {
             # Event is still active- record it so we can wipe out any orphans later.
             # That sounded AWFUL.  jeez.  I meant DELETE any events that aren't ATTACHED to anything. #BanJediHateCrimes
@@ -575,8 +596,20 @@ function Get-JanitorMode {
             $validAzureProjects += $e.HarnessOrg.replace("_","-")
         }
     }
-    Send-Update -t 1 "There are $($expiredOrgs.count) expired org(s) to process."
+    Send-Update -t 1 -c "There are $($expiredOrgs.count) expired org(s) to process."
+    Send-Update -t 1 -c "There are $($warningOrgs.count) to send warnings about."
+    ### Remove expired events & create emailList to notify instructors
     Remove-HarnessEventDetails -accounts $expiredOrgs
+    ### Create WarningList to email instructors that event will expire soon
+    $WarningList = "none"
+    foreach ($eventWarning in $WarningOrgs) {
+        if ($WarningList -eq "none") { $WarningList = "" }
+        if ($WarningList) {
+            $WarningList += ","
+        }
+        $WarningList += $account.org + ";" + $account.creator
+    }
+    $Env:WarningList = $WarningList
     # Remove unattached  events
     $eventGroups = Get-UserGroups -allEvents
     Send-Update -t 1 -c "$($validEvents.count) valid / $($eventGroups.count) total events."
@@ -608,7 +641,8 @@ function Get-JanitorMode {
         # If this hour limit based (likely running as the main script), remove any unattached users swimming around the HarnessEvents community account.
         Remove-HarnessUsers
     }
-    Send-Update -t 1 -c "Events to email instructors: $($Env:EmailList)"
+    Send-Update -t 1 -c "Expiring soon events to email instructors: $($Env:WarningList)"
+    Send-Update -t 1 -c "Expired events to email instructors: $($Env:EmailList)"
     Send-Update -t 1 -c "Unattached event email removed to notify workshop committee: $($Env:unattachedEvents)"
     Send-Update -t 1 -c "Unattached google projects removed to notify workshop committee: $($Env:unattachedGoogleProjects)"
     Send-Update -t 1 -c "End event cleanup" 
