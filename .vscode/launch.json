@@ -23,7 +23,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-d", "-eventName builder", "-newAccount asdf"]
+      "args": ["create", "-c", "-d", "-eventName builder", "-newAccount asdf123"]
     },
     {
       "name": "PowerShell: Create Random new event",
