@@ -37,6 +37,8 @@ function Get-Randomstring {
     return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
 }
 function Get-Prefs($scriptPath) {
+    # Set default verbosity
+    $PSDefaultParameterValues['Invoke-*:Verbose'] = $false
     # Do the things for the command line switches selected
     if ($detailedMode) { $script:outputLevel = 0 } else { $script:outputLevel = 1 }
     if ($cloudCommands) { $script:showCommands = $true } else { $script:showCommands = $false }
