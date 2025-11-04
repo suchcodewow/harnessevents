@@ -602,7 +602,7 @@ function Get-JanitorMode {
     Send-Update -t 1 -c "There are $($warningOrgs.count) to send warnings about."
     ### Remove expired events & create emailList to notify instructors
     Remove-HarnessEventDetails -accounts $expiredOrgs
-    ### Create WarningList to email instructors that event will expire soon
+    ### Create WarningList to email instructors when events will expire soon
     $WarningList = "none"
     foreach ($eventWarning in $WarningOrgs) {
         if ($WarningList -eq "none") { $WarningList = "" }
