@@ -1,0 +1,17 @@
+[
+  {
+    "Type": "github",
+    "SourceRepo": "suchcodewow/globalcorp-ordersapi",
+    "HarnessName": "ordersapi"
+  },
+  {
+    "Type": "github",
+    "SourceRepo": "suchcodewow/globalcorp-catalogapi",
+    "HarnessName": "catalogapi"
+  },
+  {
+    "Type": "github",
+    "SourceRepo": "suchcodewow/catalogapi-norefs",
+    "HarnessName": "catalogapi-norefs"
+  }
+]

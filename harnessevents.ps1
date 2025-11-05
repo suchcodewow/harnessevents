@@ -1539,6 +1539,37 @@ function Add-AttendeeRole {
         }
     }
 }
+function Add-CodeRepos {
+    $repositories = Get-Content -Path "./harnesseventsdata/config/project/cr.json" | Convertfrom-Json
+    $attendees = (Get-GroupMembers -groupEmail $config.GoogleEventEmail -s).members
+    foreach ($attendee in $attendees) {
+        $projectName = $attendee.email.split("@")[0]
+        foreach ($repository in $repositories) {
+            Send-Update -t 1 -c "Adding $($repository.HarnessName) to project $projectName"
+            $uri = "https://app.harness.io/code/api/v1/repos/import?accountIdentifier=$($config.HarnessAccountId)&orgIdentifier=$($config.HarnessOrg)&projectIdentifier=$projectName"
+            $codeheaders = @{
+                'x-api-key' = $config.HarnessPAT
+            }
+            $body = @{
+                "description"   = ""
+                "identifier"    = $repository.HarnessName
+                "parent_ref"    = $config.harnessAccountID + "/" + $config.HarnessOrg + "/" + $projectName
+                "pipelines"     = "ignore"
+                "provider"      = @{
+                    "host"     = ""
+                    "password" = ""
+                    "type"     = "github"
+                    "username" = ""
+                }
+                "provider_repo" = $repository.SourceRepo
+                #"uid"           = "string"
+            } | Convertto-Json
+            invoke-restmethod -Method Post -uri $uri -headers $codeheaders -body $body -ContentType "application/json"
+        }
+
+    }
+    
+}
 function Add-Delegate {
     [CmdletBinding()]
     param (
@@ -1738,6 +1769,7 @@ function Add-HarnessEventDetails {
         Add-OrgYaml -YamlFolder "$folder/*.yaml"
     }
     Add-Policies
+    Add-CodeRepos
     Add-AttendeeRole
     $attendees = Get-GroupMembers -groupEmail $config.GoogleEventEmail
     $attendees += [PSCustomObject]@{"email" = $config.GoogleUser; "role" = "OWNER" }
