@@ -1564,7 +1564,7 @@ function Add-CodeRepos {
                 "provider_repo" = $repository.SourceRepo
                 #"uid"           = "string"
             } | Convertto-Json
-            invoke-restmethod -Method Post -uri $uri -headers $codeheaders -body $body -ContentType "application/json"
+            invoke-restmethod -Method Post -uri $uri -headers $codeheaders -body $body -ContentType "application/json" | out-null
         }
 
     }
@@ -1769,7 +1769,6 @@ function Add-HarnessEventDetails {
         Add-OrgYaml -YamlFolder "$folder/*.yaml"
     }
     Add-Policies
-    Add-CodeRepos
     Add-AttendeeRole
     $attendees = Get-GroupMembers -groupEmail $config.GoogleEventEmail
     $attendees += [PSCustomObject]@{"email" = $config.GoogleUser; "role" = "OWNER" }
@@ -1785,6 +1784,7 @@ function Add-HarnessEventDetails {
             Add-HarnessUser -projectName $cleanProject -userEmail $attendee.email
         }
     }
+    Add-CodeRepos
 }
 function Add-HarnessUser {
     [CmdletBinding()]
