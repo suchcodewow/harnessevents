@@ -1,5 +1,6 @@
 [
   {
-    "PL_NO_EMAIL_FOR_SAML_ACCOUNT_INVITES": "false"
+    "PL_NO_EMAIL_FOR_SAML_ACCOUNT_INVITES": "false",
+    "PL_ALLOW_TO_SET_PUBLIC_ACCESS": "false"
   }
 ]

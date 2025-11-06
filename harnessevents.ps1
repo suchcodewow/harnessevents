@@ -1564,11 +1564,19 @@ function Add-CodeRepos {
                 "provider_repo" = $repository.SourceRepo
                 #"uid"           = "string"
             } | Convertto-Json
-            invoke-restmethod -Method Post -uri $uri -headers $codeheaders -body $body -ContentType "application/json" | out-null
+            Try {
+                invoke-restmethod -Method Post -uri $uri -headers $codeheaders -body $body -ContentType "application/json" | out-null
+            }
+            catch {
+                if ($_.Exception.Message.contains("Conflict")) {
+                    Send-Update -t 1 -c "Repo already exists"
+                }
+                else {
+                    send-Update -t 2 -c "Error adding repository: $($_.Exception.Message)"
+                }
+            }
         }
-
     }
-    
 }
 function Add-Delegate {
     [CmdletBinding()]

@@ -9,5 +9,6 @@
   "HOSTED_BUILDS": "true",
   "CCM_HARNESS_AI_UI": "true",
   "CCM_ANOMALIES_V2": "true",
-  "CCM_COST_CATEGORIES_DASHBOARD": "true"
+  "CCM_COST_CATEGORIES_DASHBOARD": "true",
+  "PL_ALLOW_TO_SET_PUBLIC_ACCESS": "true"
 }
