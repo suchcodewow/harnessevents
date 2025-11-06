@@ -1162,7 +1162,7 @@ function Save-EventDetails {
             $member.password = "Harness!"
             $member.HarnessLink = "https://app.harness.io/ng/account/$($config.HarnessAccountId)/module/cd/orgs/$($config.HarnessOrg)/projects/$($cleanProject)/pipelines"
             $harnessLink = '=HYPERLINK("' + $($member.HarnessLink) + '","Project Link")'
-            $member.LabLink = "https://suchcodewow.io/harnessevents?account=$($config.HarnessAccountId)&org=$($config.HarnessOrg)&project=$($cleanProject)"
+            $member.LabLink = "https://suchcodewow.io/globalcorp?account=$($config.HarnessAccountId)&org=$($config.HarnessOrg)&project=$($cleanProject)"
             $labLink = '=HYPERLINK("' + $($member.LabLink) + '","Lab Guide")'
             $exportArray += ,@($member.email, $member.password, $harnessLink, $labLink)
         }
