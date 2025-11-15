@@ -10,7 +10,7 @@ param (
     [Parameter()][string] $eventName,                   # [CREATE] specify event name
     [Parameter()][switch] $gcp,                         # [CREATE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # debug option: override project creation to use a specific project
-    [Parameter()][string] $HarnessPAT,                  # [CREATE] harness PAT (default is community HarnessEvents account)
+    [Parameter()][string] $harnessPAT,                  # [CREATE] harness PAT (default is community HarnessEvents account)
     [Parameter()][int] $hourLimit,                      # [REMOVE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
     [Parameter()][string] $instructorName,              # [CREATE] specify instructorName (defaults to current user)
     [Parameter()][string] $newAccount,                  # [CREATE] specify new account name (will create account, licenses, PAT)
