@@ -12,7 +12,7 @@
       "args": ["-c", "-d"]
     },
     {
-      "name": "PowerShell: Create new named event",
+      "name": "PowerShell: Create new named event with GCP",
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",

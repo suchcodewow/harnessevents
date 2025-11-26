@@ -1872,7 +1872,16 @@ function Add-Licenses {
     $fixGodDamnEnv = $config.HarnessEnv.tolower()
     $accountSummaryUri = "https://admin.harness.io/api/accounts/summary/$($config.HarnessAccountId)?clusterId=$fixGodDamnEnv&clusterType=PAID"
     Send-Update -t 0 -c "checking account summary with uri: $accountSummaryUri"
-    $response = invoke-restmethod -Method Get -Headers $harnessAdminHeaders -uri $accountSummaryUri -ContentType "application/json"
+    Try {
+        $response = invoke-restmethod -Method Get -Headers $harnessAdminHeaders -uri $accountSummaryUri -ContentType "application/json"
+    }
+    catch {
+        if ($_.Exception.Response.StatusCode -eq "Forbidden") {
+            Send-update -t 2 -c "Can't reach admin.harness.io. Skipping license creation- this could have unexpected results."
+            return
+        }
+
+    }
     $currentLicenses = $response.allModuleLicenses
     $uriLicense = "https://admin.harness.io/api/accounts/$($config.HarnessAccountId)/ng/license?clusterId=$fixGodDamnEnv&clusterType=PAID"
 
