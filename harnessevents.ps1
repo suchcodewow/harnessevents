@@ -64,26 +64,31 @@ function Get-Prefs($scriptPath) {
         $script:providerColumns = @("option", "provider", "name")
         $script:eventColumns = @("option","Name", "Email")
     }
-    if (Test-Path $configFile) {
-        Send-Update -c "Reading config" -t 0
-        $script:previousConfig = Get-Content $configFile -Raw | ConvertFrom-Json
+    if ($action -eq "reload") {
+        Send-Update -t 1 -c "Reloading functions for testing. Skipping conf cleanup."
     }
-    $script:config = [PSCustomObject]@{}
-    $config | ConvertTo-Json | Out-File $configFile
-    $carryoverVariables = @(
-        "GoogleAccessToken",
-        "GoogleAccessTokenTimestamp",
-        "GoogleAppToken",
-        "GoogleAppTokenTimestamp",
-        "AdminProjectId",
-        "HarnessFFToken",
-        "HarnessEventsPAT",
-        "GoogleAccessToken",
-        "GoogleServiceAccount",
-        "ServiceAccountEmail",
-        "ServiceAccountKey")
-    foreach ($c in $carryoverVariables) {
-        if ($previousConfig.$c) { Set-Prefs -k $c -v $previousConfig.$c } else { $script:refreshToken = $true }
+    else {
+        if (Test-Path $configFile) {
+            Send-Update -c "Reading config" -t 0
+            $script:previousConfig = Get-Content $configFile -Raw | ConvertFrom-Json
+        }
+        $script:config = [PSCustomObject]@{}
+        $config | ConvertTo-Json | Out-File $configFile
+        $carryoverVariables = @(
+            "GoogleAccessToken",
+            "GoogleAccessTokenTimestamp",
+            "GoogleAppToken",
+            "GoogleAppTokenTimestamp",
+            "AdminProjectId",
+            "HarnessFFToken",
+            "HarnessEventsPAT",
+            "GoogleAccessToken",
+            "GoogleServiceAccount",
+            "ServiceAccountEmail",
+            "ServiceAccountKey")
+        foreach ($c in $carryoverVariables) {
+            if ($previousConfig.$c) { Set-Prefs -k $c -v $previousConfig.$c } else { $script:refreshToken = $true }
+        }
     }
     # if we're missing any variables trigger a full refresh
     if ($refreshToken) { Set-Prefs -k "GoogleAccessToken" }
@@ -734,6 +739,9 @@ function Enable-ServiceAccount {
     }
     if ($currentUser.contains("@harness.io")) {
         $initProject = gcloud projects list --filter='name:sales' --format=json | Convertfrom-Json
+    }
+    else {
+        $initProject = gcloud projects list --filter='name:administration' --format=json | Convertfrom-Json
     }
     if ($initProject.count -ne 1) {
         Send-Update -t 3 -c "Failed to find project. Try running (gcloud auth login) using your work email."
@@ -1877,7 +1885,7 @@ function Add-Licenses {
     }
     catch {
         if ($_.Exception.Response.StatusCode -eq "Forbidden") {
-            Send-update -t 2 -c "Can't reach admin.harness.io. Skipping license creation- this could have unexpected results."
+            Send-update -t 2 -c "Can't reach admin.harness.io (likely VPN not enabled). Skipping license creation- this could have unexpected results."
             return
         }
 
@@ -2913,7 +2921,8 @@ function Get-GCPProjectList {
     return $projects
 }
 function New-GCPProject {
-    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter='name:$($config.GoogleClassroom)' --format=json" | convertfrom-json
+    ## Create Project
+    $projectCheck = Send-Update -t 1 -c "Check for existing project" -r "gcloud projects list --filter=name:$($config.GoogleClassroom) --format=json" | convertfrom-json
     if ($projectCheck) {
         # Project already exists- skip creation
         Send-Update -t 1 -c "Project already exists- skipping creation."
@@ -2924,49 +2933,81 @@ function New-GCPProject {
         $googleAdminAncestors = Send-Update -t 1 -c "Retrieve org info" -r "gcloud projects get-ancestors $($config.AdminProjectId) --format=json" | ConvertFrom-Json
         $GoogleOrgId = ($googleAdminAncestors | Where-Object { $_.type -eq "organization" }).id
         # Get billing project of admin project to associate with this project
-        $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
-        $GoogleBillingProject = $AdminProjectInfo.name.split("/")[1]
         $projectID = "event-$(Get-Randomstring)"
         $projectID = $projectID.tolower()
-        Send-Update -t 1 -o -c "Create $($config.GoogleClassroom) project" -r "gcloud projects create $projectID --name=""$($config.GoogleClassroom)"" --organization=$GoogleOrgId --set-as-default -q"
+        Send-Update -t 1 -o -c "Create $($config.GoogleClassroom) project" -r "gcloud projects create $projectID --name=$($config.GoogleClassroom) --organization=$GoogleOrgId --set-as-default -q"
         while (-not $projectDetails) {
-            $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter='name:$($config.GoogleClassroom)' --format=json" | Convertfrom-Json   
+            $projectDetails = Send-Update -t 1 -c "Waiting for project to be available..." -r "gcloud projects list --filter=name:$($config.GoogleClassroom) --format=json" | Convertfrom-Json   
             Start-Sleep -s 6
         }
-        # Associate project with billing account
-        Send-Update -t 1 -o -c "Associate billing account" -r "gcloud billing projects link $projectID --billing-account=$GoogleBillingProject"
         Set-Prefs -k "GoogleProjectId" -v $projectDetails.projectId
-        # Add users to project
-        Send-Update -t 1 -o -c "Add group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
-        Send-Update -t 1 -o -c "Add user $($config.InstructorEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
-        Send-Update -t 1 -o -c "Add group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
-        # Enable API's needed for events
-        $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
-        Foreach ($api in $projectApis) {
-            send-Update -t 1 -o -c "Enabling $api API" -r "gcloud services enable $api"
-        }
-        # Wait for confirmation that API's are enabled
-        $counter = 0
-        Do {
-            $counter++
-            if ($counter -ge 10) {
-                Send-Update -t 3 -c "It took too long enabling needed API's.  I blame Google."
-            }
-            $enabledAPIs = gcloud services list --format=json | Convertfrom-Json
-            $neededAPIs = Compare-Object $projectAPIs $enabledAPIs.config.name | Where-Object { $_.SideIndicator -eq "<=" }
-            Start-Sleep -s 4
-        } until (-not $neededAPis)
     }
+    ## Account Billing
+    $AdminProjectInfo = Send-Update -t 1 -c "Retrieving billing account" -r "gcloud billing accounts list --filter=displayName='HarnessEvents' --format=json" | ConvertFrom-Json
+    $GoogleBillingProject = $AdminProjectInfo.name.split("/")[1]
+    $billingCheck = Send-Update -t 1 -c "Checking if billing account is associated to this project already." -r "gcloud billing projects describe $($config.GoogleProjectId) --format=json" | Convertfrom-Json
+    if ($billingCheck.billingAccountName -and $billingCheck.billingAccountName.substring(0,16) -eq "billingAccounts/") { $billingAccount = $billingCheck.billingAccountName.substring(16) }
+    if ($billingAccount -eq $GoogleBillingProject) {
+        Send-Update -t 1 -c "Project already is associated to billing account: $GoogleBillingProject"
+    }
+    else {
+        Send-Update -t 1 -o -append -c "Connecting billing account" -r "gcloud billing projects link $($config.GoogleProjectId) --billing-account=$GoogleBillingProject"
+        $counter = 0
+        while ($billingAccount -ne $GoogleBillingProject) {
+            Start-Sleep -s 4
+            $billingCheck = gcloud billing projects describe $($config.GoogleProjectId) --format=json | Convertfrom-Json
+            if ($billingCheck.billingAccountName -and $billingCheck.billingAccountName.substring(0,16) -eq "billingAccounts/") { $billingAccount = $billingCheck.billingAccountName.substring(16) }
+            Send-Update -t 1 -append "."
+            $counter++
+            if ($counter -ge 20) {
+                Send-Update -t 3 -c "The Google billing account never associated with the project."
+            }
+        }
+        Send-Update -t 1 -c "connected"
+    }
+    ## IAM Bindings
+    $currentIAM = gcloud projects get-iam-policy $config.GoogleProjectId --format=json | Convertfrom-Json
+    if ($currentIAM.bindings.members -notcontains "group:300@harnessevents.io") { 
+        Send-Update -t 1 -o -c "Adding group 300@harnessevents.io to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:300@harnessevents.io' --role='roles/owner' -q" | out-null
+    }
+    if ($currentIAM.bindings.members -notcontains "user:$($config.InstructorEmail)") { 
+        Send-Update -t 1 -o -c "Adding user $($config.InstructorEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='user:$($config.InstructorEmail)' --role='roles/owner' -q" | out-null
+    }
+    if ($currentIAM.bindings.members -notcontains "group:$($config.GoogleEventEmail)") { 
+        Send-Update -t 1 -o -c "Adding group $($config.GoogleEventEmail) to project" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member='group:$($config.GoogleEventEmail)' --role='roles/editor' -q" | out-null
+    }
+    # Enable API's needed for events
+    $currentAPIS = Send-Update -t 1 -c "Retrieving currently enabled API's" -r "gcloud services list --enabled --format=json --project=$($config.GoogleProjectId) | Convertfrom-Json | Select-Object -Expandproperty config | Select-Object -Expandproperty name"
+    $projectAPIs = @("compute.googleapis.com","container.googleapis.com","run.googleapis.com")
+    Foreach ($api in $projectApis) {
+        if ($currentAPIS -notcontains $api) {
+            send-Update -t 1 -o -c "Enabling api: $api" -r "gcloud services enable $api --project=$($config.GoogleProjectId)"
+        }
+        else {
+            Send-Update -t 1 -c "$api already enabled."
+        }
+    }
+    # Wait for confirmation that API's are enabled
+    $counter = 0
+    Do {
+        $counter++
+        if ($counter -ge 10) {
+            Send-Update -t 3 -c "It took too long enabling needed API's.  I blame Google."
+        }
+        $enabledAPIs = gcloud services list --project=$($config.GoogleProjectId) --format=json | Convertfrom-Json
+        $neededAPIs = Compare-Object $projectAPIs $enabledAPIs.config.name | Where-Object { $_.SideIndicator -eq "<=" }
+        Start-Sleep -s 2
+    } until (-not $neededAPis)
     # Create worker, get keys, add to IAM
-    $serviceAccountCheck = gcloud iam service-accounts list --filter='email ~ worker1' --format=json --project=$($config.GoogleProjectId) | Convertfrom-Json
+    $serviceAccountCheck = gcloud iam service-accounts list --filter='email ~ worker1' --format=json --project=$($config.GoogleProjectId) --verbosity=error | Convertfrom-Json
     if (-not $serviceAccountCheck) {
         Send-Update -t 1 -o -c "Creating service account" -r "gcloud iam service-accounts create worker1 --project=$($config.GoogleProjectId)" -append
         Do {
             Send-Update -t 1 -c "." -append
-            $serviceAccount = gcloud iam service-accounts list --filter='email ~ worker1' --format=json --project=$($config.GoogleProjectId) | Convertfrom-Json
+            $serviceAccount = gcloud iam service-accounts list --filter='email ~ worker1' --format=json --project=$($config.GoogleProjectId) --verbosity=error | Convertfrom-Json
             if (-not $serviceAccount) { Start-Sleep -s 2 }
         } until ($serviceAccount)
-        Send-Update -t 1 -c "...created"
+        Send-Update -t 1 -c "created"
         Send-Update -t 1 -o -c "Grant service account permissions" -r "gcloud projects add-iam-policy-binding $($config.GoogleProjectId) --member=serviceAccount:worker1@$($config.GoogleProjectId).iam.gserviceaccount.com --role='roles/editor'"
         Send-Update -t 1 -o -c "Generate local key json file" -r "gcloud iam service-accounts keys create worker1.json --iam-account=worker1@$($config.GoogleProjectId).iam.gserviceaccount.com"
         Add-SecretJson -fileName worker1.json -id GCP_Service_Account
@@ -3045,5 +3086,6 @@ Get-Prefs($Myinvocation.MyCommand.Source)
 switch ($action) {
     "create" { Get-CreateMode }
     "remove" { Get-JanitorMode }
+    "reload" { write-host }
     Default { Get-Help }
 }

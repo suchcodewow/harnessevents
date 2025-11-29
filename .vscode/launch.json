@@ -16,7 +16,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["create", "-c", "-d", "-eventName builder", "-gcp"]
+      "args": ["create", "-c", "-d", "-eventName mammothhope", "-gcp"]
     },
     {
       "name": "PowerShell: Create new account and new event",
@@ -51,7 +51,7 @@
       "type": "PowerShell",
       "request": "launch",
       "script": "${file}",
-      "args": ["-c", "-d"]
+      "args": ["reload", "-c", "-d"]
     }
   ]
 }
