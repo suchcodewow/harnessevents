@@ -1,0 +1,19 @@
+template:
+  name: Owasp Dependency Scan
+  type: Step
+  orgIdentifier: default
+  spec:
+    type: Owasp
+    spec:
+      mode: orchestration
+      config: default
+      target:
+        type: repository
+        detection: auto
+      advanced:
+        log:
+          level: info
+        args:
+          cli: <+secrets.getValue("org.owasptoken")>
+  identifier: Owasp_Dependency_Scan
+  versionLabel: "1"
