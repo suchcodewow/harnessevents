@@ -1012,11 +1012,11 @@ function New-Group {
         }
         else {
             $counter++
-            if ($counter -gt 30) {
-                Send-Update -t 2 -c "Group creation failed after 10 tries!"
+            if ($counter -gt 120) {
+                Send-Update -t 3 -c "Group creation failed after 10 minutes waiting!"
                 exit
             }
-            Start-sleep -s 3
+            Start-sleep -s 5
         }
     } until ($success)
 }
