@@ -705,10 +705,10 @@ function Add-EventUsers {
     While ($memberCount -lt $($config.UserEventCount)) {
         $memberCount = (Get-GroupMembers -s -groupEmail $config.GoogleEventEmail).memberCount
         Send-Update -t 1 -c "$memberCount of $($config.UserEventCount)"
-        Start-Sleep -s 4
+        Start-Sleep -s 5
         $memberCounter++
-        if ($memberCounter -gt 20) {
-            Send-Update -t 2 -c "Something went wrong- users didn't load correctly."
+        if ($memberCounter -gt 120) {
+            Send-Update -t 3 -c "Something went wrong- users didn't load correctly."
             exit
         }
     }
