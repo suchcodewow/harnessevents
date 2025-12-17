@@ -417,6 +417,9 @@ function Save-Event {
     $datePrefix = $(Get-Date -Uformat "%Y-%m")
     $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.GoogleEventName + ".json"
     gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName --no-user-output-enabled
+
+}
+function Save-OutputVariables {
     # Save details as environment variables to use later
     foreach ($item in $config.psobject.members | Where-Object { $_.MemberType -eq 'NoteProperty' }) {
         if (test-path -path Env:$($item.Name)) { Remove-Item Env:$($item.Name) }
@@ -497,6 +500,7 @@ function Get-CreateMode {
     # Create the event
     New-Event
     Sync-Event
+    Save-OutputVariables
     Disable-ServiceAccount
     Send-Update -t 1 -c "End Create Mode"
     exit
@@ -1003,11 +1007,12 @@ function New-Group {
     Send-Update -t 0 -c "Create new group returned: $response"
     $success = $false
     $counter = 0
+    Send-Update -t 1 -a -c "Waiting for group creation"
     Do {
-        Send-Update -t 1 -c "Waiting for group creation..."
+        Send-Update -t 1 -a -c "."
         $response = Invoke-RestMethod -Method 'Get' -Uri $uri -Headers $headers
         if ($response.groups) {
-            Send-Update -t 1 -c "Group $email created successfully!"
+            Send-Update -t 1 -c "Group $email created"
             $success = $true
         }
         else {
