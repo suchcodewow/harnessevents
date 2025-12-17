@@ -6,7 +6,7 @@ param (
     [Parameter()][switch] $aws,                         # [CREATE] create aws classroom for event TODO
     [Parameter()][switch] $azure,                       # [CREATE] create azure classroom for event TODO
     [Parameter()][switch] $cloudCommands,               # debug option: enable to show commands
-    [Parameter()][switch] $detailedMode,                 # debug option: level 0 (debug/info/errors) output (versus standard level 1 info/errors)
+    [Parameter()][switch] $detailedMode,                # debug option: level 0 (debug/info/errors) output (versus standard level 1 info/errors)
     [Parameter()][string] $eventName,                   # [CREATE] specify event name
     [Parameter()][switch] $gcp,                         # [CREATE] create gcp classroom for event
     [Parameter()][string] $googleCloudProjectOverride,  # debug option: override project creation to use a specific project
@@ -14,6 +14,7 @@ param (
     [Parameter()][int] $hourLimit,                      # [REMOVE] max event lifespan in hours (WARNING: THIS AFFECTS ALL EVENTS)
     [Parameter()][string] $instructorName,              # [CREATE] specify instructorName (defaults to current user)
     [Parameter()][string] $newAccount,                  # [CREATE] specify new account name (will create account, licenses, PAT)
+    [Parameter()][switch] $skipInfra,                   # Suppress creation of project resources for NikP IaCM version
     [Parameter()][int] $timeOffset,                     # debug option: set hour offset when creating event to test event cleanup
     [Parameter()][int] $userCount,                      # [CREATE MODE] specify number of attendees (default is 1)
     [Parameter()][switch] $whatif                       # debug option:testing option to prevent significant changes
@@ -411,10 +412,16 @@ function Test-PreFlight {
     
 }
 function Save-Event {
+    # Save event details to google cloud
     Set-Prefs -k "EventCreateTime" -v $(Get-Date).AddHours($timeOffset)
     $datePrefix = $(Get-Date -Uformat "%Y-%m")
     $fileName = $config.GoogleUser.split("@")[0] + "-" + $config.GoogleEventName + ".json"
     gcloud storage cp $configFile gs://harnesseventsdata/events/open/$datePrefix-$fileName --no-user-output-enabled
+    # Save details as environment variables to use later
+    foreach ($item in $config.psobject.members | Where-Object { $_.MemberType -eq 'NoteProperty' }) {
+        if (test-path -path Env:$($item.Name)) { Remove-Item Env:$($item.Name) }
+        New-Item -Path Env:$($item.Name) -Value $item.Value
+    }
 }
 
 ## Actions
@@ -3018,7 +3025,8 @@ function New-GCPProject {
     if (Test-Path worker1.json) { Remove-Item worker1.json }
     # Load GCP-specific templates
     Add-OrgYaml -YamlFolder ./harnesseventsdata/orgGCP
-    # Move on to loading GCP resources
+    # Move on to loading GCP resources unless skipping
+    if ($skipInfra) { return }
     New-GCPResources
 }
 function New-GCPResources {
