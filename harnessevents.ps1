@@ -27,16 +27,6 @@ function Get-Help {
     Write-host "example: ./harnessevents.ps1 create"
     Write-Host
 }
-function Get-Randomstring {
-    [CmdletBinding()]
-    param (
-        [Parameter()]
-        [int]
-        $characterCount
-    )
-    if (-not $characterCount) { $characterCount = 6 }
-    return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
-}
 function Get-Prefs($scriptPath) {
     # Set default verbosity
     $PSDefaultParameterValues['Invoke-*:Verbose'] = $false
@@ -95,6 +85,16 @@ function Get-Prefs($scriptPath) {
     if ($refreshToken) { Set-Prefs -k "GoogleAccessToken" }
     Send-Update -c "CREATED config" -t 0
 
+}
+function Get-Randomstring {
+    [CmdletBinding()]
+    param (
+        [Parameter()]
+        [int]
+        $characterCount
+    )
+    if (-not $characterCount) { $characterCount = 6 }
+    return -join ((65..90) + (97..122) + (48..57) | Get-Random -Count $characterCount | ForEach-Object { [char]$_ })
 }
 function Get-UserName {
     # Generate a fun PG-rated madlibs-style username
@@ -304,14 +304,12 @@ function Set-Prefs {
         [switch]$output # Output the value to debug stream
     )
     if ($v) {
-        if ($o) { Send-Update -c "Updating key: $k -> $v" -t 0 }
-        #$config[$k] = $v
+        if ($o) { Send-Update -c "Updating key: $k -> $v" -t 1 }
         $config | Add-Member -MemberType NoteProperty -Name $k -Value $v -Force
     }
     else {
         if ($k -and $config.$k) {
             if ($o) { Send-Update -c "Deleting config key: $k" -t 0 }
-            #$config.remove($k)
             $config.PSObject.Properties.Remove($k)
         }
         else {
@@ -428,7 +426,7 @@ function Save-OutputVariables {
 }
 
 ## Actions
-function Get-CreateMode {
+function Invoke-Create {
     Send-Update -t 1 -c "Setting up config for new event."
     # Error out with any problems
     $ErrorActionPreference = "Stop"
@@ -476,6 +474,11 @@ function Get-CreateMode {
     # Get Access tokens / set headers for assorted systems
     Get-GoogleAccessToken
     Get-HarnessAdminCredentials
+    if ($action -eq "reload") {
+        Send-Update -t 1 -c "Reload done!"
+        exit
+    }
+    exit
     # Create account if requested
     if ($newAccount) {
         $harnessToken = Add-Account -accountName $newAccount
@@ -505,7 +508,10 @@ function Get-CreateMode {
     Send-Update -t 1 -c "End Create Mode"
     exit
 }
-function Get-JanitorMode {
+function Invoke-Reload {
+    Get-GoogleApiAccessToken
+}
+function Invoke-Janitor {
     $cliUser = gcloud auth list --format='value(account)' --filter=status=active
     $allUsers = gcloud auth list --format='value(account)' --filter='-ACCOUNT:-compute'
     Set-Prefs -k "CLIUser" -v $cliUser -o
@@ -3097,8 +3103,8 @@ function Remove-GCPProject {
 Test-PreFlight
 Get-Prefs($Myinvocation.MyCommand.Source)
 switch ($action) {
-    "create" { Get-CreateMode }
-    "remove" { Get-JanitorMode }
-    "reload" { write-host }
+    "create" { Invoke-Create }
+    "remove" { Invoke-Janitor }
+    "reload" { Invoke-Create }
     Default { Get-Help }
 }
