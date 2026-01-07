@@ -398,8 +398,7 @@ function Test-PreFlight {
         Send-Update -t 1 -c "gcloud commands available!"
     }
     else {
-        Send-Update -t 2 -c "gcloud commands not found. install via mac with: brew install --cask google-cloud-sdk"
-        exit
+        Send-Update -t 3 -c "gcloud commands not found. install via mac with: brew install --cask google-cloud-sdk"
     }
     # Check if using cloudsdk but there is a normal user account.  Switch if so.
     $currentUser = gcloud auth list --format='value(account)' --filter=status=active
@@ -478,7 +477,6 @@ function Invoke-Create {
         Send-Update -t 1 -c "Reload done!"
         exit
     }
-    exit
     # Create account if requested
     if ($newAccount) {
         $harnessToken = Add-Account -accountName $newAccount
@@ -507,9 +505,6 @@ function Invoke-Create {
     Disable-ServiceAccount
     Send-Update -t 1 -c "End Create Mode"
     exit
-}
-function Invoke-Reload {
-    Get-GoogleApiAccessToken
 }
 function Invoke-Janitor {
     $cliUser = gcloud auth list --format='value(account)' --filter=status=active
